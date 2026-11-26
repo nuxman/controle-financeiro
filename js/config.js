@@ -6,5 +6,5 @@
 // NUNCA coloque aqui: a chave "service_role" / "secret", a senha do banco, nem a connection string.
 // O app se recusa a iniciar se detectar uma chave secreta.
 
-export const SUPABASE_URL = 'https://SEU-PROJETO.supabase.co';
+export const SUPABASE_URL = 'https://klexiqohiwxsmzpabqkq.supabase.co';
 export const SUPABASE_ANON_KEY = 'COLE-AQUI-A-CHAVE-ANON-OU-PUBLISHABLE';
