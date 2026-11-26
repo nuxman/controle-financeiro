@@ -1,0 +1,21 @@
+# Segredos
+.env
+.env.*
+*.key
+*.pem
+
+# Dados financeiros pessoais: nunca no repositório
+dados-pessoais*.sql
+seed*.sql
+*.csv
+*.ofx
+*.pdf
+*.xls
+*.xlsx
+extratos/
+faturas/
+
+# Sistema
+.DS_Store
+Thumbs.db
+node_modules/
