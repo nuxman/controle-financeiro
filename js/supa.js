@@ -12,7 +12,7 @@ function decodeJwt(t) {
 // Recusa configuração perigosa: a chave secreta nunca pode ir para o navegador.
 export function validarConfig(url, chave) {
   if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(url || '')) return 'SUPABASE_URL inválida (esperado https://xxxx.supabase.co).';
-  if (!chave) return 'SUPABASE_ANON_KEY vazia.';
+  if (/SEU-PROJETO/i.test(url) || !chave || /COLE-AQUI/i.test(chave)) return 'O app ainda não está ligado ao Supabase: preencha a URL do projeto e a chave anon/publishable em js/config.js.';
   if (/^sb_secret_/i.test(chave)) return 'Você colou a chave SECRETA. Use a chave publishable/anon e troque a secreta no painel do Supabase.';
   const p = chave.startsWith('eyJ') ? decodeJwt(chave) : null;
   if (p && p.role === 'service_role') return 'Você colou a chave service_role. Use a chave anon e gere uma nova service_role no painel do Supabase.';
