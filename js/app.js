@@ -75,14 +75,20 @@ $$('.abas button').forEach((b) => b.addEventListener('click', () => {
 
 // ---------------- Carregar dados ----------------
 async function carregar() {
-  await seguro(async () => {
+  $('#erro-config').hidden = true;
+  const ok = await seguro(async () => {
     const [contas, receitas, compromissos, parcelas, lancamentos, config, limites] = await Promise.all([
       db.listar('contas'), db.listar('receitas'), db.listar('compromissos'), db.listar('parcelas'),
-      db.listar('lancamentos', 'data.desc'), db.listar('config'), db.listar('limites'),
+      db.listar('lancamentos', 'data.desc'), db.listar('config', 'user_id.asc'), db.listar('limites', 'categoria.asc'),
     ]);
     dados = { contas, receitas, compromissos, parcelas, lancamentos, config: config[0] || null, limites };
     renderTudo();
+    return true;
   });
+  if (!ok && db.logado) {
+    $('#erro-config').textContent = 'Não foi possível carregar seus dados. Recarregue a página; se continuar, envie um print desta mensagem.';
+    $('#erro-config').hidden = false;
+  }
 }
 
 function renderTudo() { renderPainel(); renderCadastros(); preencherConfig(); }
