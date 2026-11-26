@@ -7,4 +7,4 @@
 // O app se recusa a iniciar se detectar uma chave secreta.
 
 export const SUPABASE_URL = 'https://klexiqohiwxsmzpabqkq.supabase.co';
-export const SUPABASE_ANON_KEY = 'COLE-AQUI-A-CHAVE-ANON-OU-PUBLISHABLE';
+export const SUPABASE_ANON_KEY = 'sb_publishable_5ef0BK7vd_yzMv0xvEtZ-Q_z_9Wtln3';
