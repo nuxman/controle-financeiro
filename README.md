@@ -19,8 +19,8 @@ Compras no crédito contam no mês em que você compra (não quando a fatura che
 
 ### 1. Supabase (projeto separado do app de remédios)
 1. Em supabase.com, crie um **novo projeto** só para este app. Assim, um problema num app não expõe os dados do outro.
-2. **SQL Editor** → cole e rode `supabase/schema.sql`.
-3. Rode `supabase/verificar_seguranca.sql`. Todas as linhas devem mostrar `rls = true`, `policies = 1` e `anon_pode_ler = false`.
+2. **SQL Editor** → cole e rode `supabase/schema.sql` e depois `supabase/002_evolucao.sql` (importação de PDFs; pode rodar de novo sem erro).
+3. Rode `supabase/verificar_seguranca.sql`. Todas as linhas devem mostrar `rls = true`, `rls_forcado = true`, `policies = 1`, `anon_pode_ler = false` e `trava_dono = true`.
 4. **Authentication → Sign In / Providers → Email:** desligue **"Allow new users to sign up"**.
 5. **Authentication → Users → Add user:** crie o seu usuário com uma senha forte (12+ caracteres) e marque "Auto Confirm".
 6. (Opcional) Rode o seu arquivo de dados pessoais no SQL Editor. **Esse arquivo nunca vai para o GitHub.**
@@ -37,6 +37,24 @@ Em **Project Settings → API** (ou **API Keys**), copie a **Project URL** e a c
 2. **Settings → Pages:** Source = *Deploy from a branch*, branch `main`, pasta `/ (root)`.
 3. **Settings → Code security:** ative **Secret scanning** e **Push protection**.
 
+## Importar PDF (aba Importar)
+
+Faturas do **Bradesco** e do **Nubank**. Escolha o arquivo e o tipo (ou deixe "Detectar pelo texto").
+
+**O que fica só no navegador:** o PDF, o texto extraído dele e a senha do PDF. A leitura é feita pelo [pdf.js](https://mozilla.github.io/pdf.js/) copiado em `vendor/pdfjs/` (versão fixa, licença Apache-2.0 junto), carregado do próprio site. Nada disso é enviado a servidor nem a serviço de IA. Só vão para o Supabase as linhas que você confirmar na tela de revisão, mais um registro em `importacoes` com o **hash SHA-256** do texto (não o texto), o tipo, a competência e os totais.
+
+**Como funciona**
+1. O app soma os lançamentos lidos e compara com o total da fatura (tolerância de R$ 0,05). O **saldo anterior** e os pagamentos entram só nessa conferência, nunca como gasto (a fatura *aberta* do app do Bradesco soma a fatura anterior não paga). Se não bater, mostra a diferença e não importa.
+2. Na revisão, cada linha mostra o que vai acontecer:
+   - compra à vista → gasto (`lancamentos`, meio crédito) no dia da compra;
+   - parcelada `(k/n)` → a parcela k entra no valor da fatura; as `n − k` restantes viram uma linha em `parcelas` a partir do mês seguinte ao vencimento (ou atualizam a que já existe com mesma descrição, valor e cartão);
+   - compras antes do início do controle e créditos/estornos → entram no valor da fatura;
+   - a fatura → compromisso pontual no mês do vencimento (desmarque se já foi paga).
+3. Lançamentos parecidos (mesmo valor ±R$ 0,01, até 2 dias de diferença) aparecem destacados; você escolhe, linha a linha, qual manter.
+4. O mesmo arquivo (mesmo hash) não pode ser importado duas vezes. Para desfazer uma importação, apague a linha dela em `importacoes` no Supabase: o que ela criou é apagado junto (`on delete cascade`). Atualizações feitas em parcelas que já existiam não são desfeitas.
+
+PDF com senha: o app pede a senha num campo de senha, usa só para abrir o arquivo e esquece.
+
 ## Segurança
 
 | Risco | Proteção |
@@ -45,10 +63,14 @@ Em **Project Settings → API** (ou **API Keys**), copie a **Project URL** e a c
 | Alguém criar conta e entrar | Cadastro público desligado; o usuário é criado no painel |
 | Vazar segredo no repositório | Só URL + chave anon no código; `.gitignore` bloqueia `.env`, `*.sql` pessoais, CSV, PDF e planilhas; push protection do GitHub |
 | XSS (texto malicioso numa descrição) | Nenhum dado vira HTML (só `textContent`); CSP bloqueia scripts de fora e scripts inline |
+| PDF malicioso ou vazamento do conteúdo | PDF lido só no navegador; pdf.js local com `isEvalSupported: false`, sem fontes embutidas, sem XFA; texto extraído tratado como não confiável (validação + `CHECK` no banco); limite de 10 MB |
 | Código de terceiros comprometido (CDN) | Nenhuma biblioteca externa; cliente Supabase próprio em `js/supa.js` |
 | Clickjacking | O app não abre dentro de `<iframe>` de outro site |
 | Valores absurdos | `CHECK` no banco (valor > 0, limites de tamanho, mês sempre dia 1) |
 | CSRF | Não se aplica: a autenticação vai no cabeçalho `Authorization`, não em cookie |
+
+**CSP** (`<meta>` no `index.html`): `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://*.supabase.co; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'`.
+- `worker-src 'self'`: o pdf.js lê o PDF num Web Worker (`vendor/pdfjs/pdf.worker.min.mjs`), carregado do próprio site. Nenhum outro acréscimo foi necessário: o pdf.js não faz requisição de rede porque recebe os bytes do arquivo direto.
 
 **Limitações conhecidas**
 - O token de sessão fica no `localStorage` (para não pedir login toda hora no celular). Se um XSS acontecer, ele pode ser lido. A CSP reduz esse risco, mas não o elimina.
@@ -62,6 +84,6 @@ node --test tests/*.test.mjs
 
 ## Próximas etapas
 - Resumo diário por e-mail/Telegram (Supabase Edge Function + agendamento)
-- Importação de CSV das faturas e extratos
+- Importação de extratos (CSV/OFX)
 - Revisão mensal automática e metas
 - Lançamento pelo WhatsApp

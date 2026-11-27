@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://*.supabase.co; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://*.supabase.co; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="no-referrer">
   <meta name="robots" content="noindex, nofollow">
   <meta name="theme-color" content="#0f1115">
@@ -40,6 +40,7 @@
         <button type="button" role="tab" data-aba="painel" class="ativa">Painel</button>
         <button type="button" role="tab" data-aba="lancar">Lançar</button>
         <button type="button" role="tab" data-aba="simular">E se eu comprar?</button>
+        <button type="button" role="tab" data-aba="importar">Importar</button>
         <button type="button" role="tab" data-aba="cadastros">Cadastros</button>
       </nav>
 
@@ -126,6 +127,32 @@
             <tbody id="sim-tabela"></tbody>
           </table></div>
         </div>
+      </section>
+
+      <!-- Importar -->
+      <section id="aba-importar" class="aba" hidden>
+        <div class="card">
+          <h2>Importar PDF</h2>
+          <p class="nota">O PDF é lido <strong>neste aparelho</strong>, pelo navegador. Nem o arquivo nem o texto dele são enviados a lugar nenhum: só os lançamentos que você confirmar vão para o banco.</p>
+          <form id="form-importar">
+            <div class="linha">
+              <label>Arquivo <input type="file" name="arquivo" accept="application/pdf,.pdf" required></label>
+              <label>Tipo
+                <select name="tipo">
+                  <option value="">Detectar pelo texto</option>
+                  <option value="fatura_bradesco">Fatura Bradesco</option>
+                  <option value="fatura_nubank">Fatura Nubank</option>
+                  <option value="contracheque">Contracheque (TJRO)</option>
+                </select>
+              </label>
+            </div>
+            <label id="campo-senha" hidden>Senha do PDF (usada só agora, não é salva)
+              <input type="password" name="senha" maxlength="64" autocomplete="off">
+            </label>
+            <button type="submit">Ler PDF</button>
+          </form>
+        </div>
+        <div id="revisao"></div>
       </section>
 
       <!-- Cadastros -->

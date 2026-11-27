@@ -79,4 +79,8 @@ details form { margin-top: 10px; }
 .alerta { max-width: 960px; margin: 12px auto; padding: 12px 16px; border-radius: var(--raio); background: var(--card); border: 1px solid var(--ruim); color: var(--ruim); }
 .aviso { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); max-width: 92vw; padding: 10px 16px; border-radius: 10px; background: var(--fg); color: var(--bg); z-index: 10; font-size: .9rem; }
 .aviso.ruim { background: var(--ruim); color: #fff; } .aviso.atencao { background: var(--atencao); color: #fff; }
+.revisao td select { padding: 4px; font-size: .85rem; }
+.revisao tr.dup td { background: color-mix(in srgb, var(--atencao) 12%, transparent); }
+.revisao small { display: block; color: var(--muted); }
+.formula { font-family: ui-monospace, monospace; font-size: .82rem; overflow-wrap: anywhere; }
 @media (max-width: 480px) { .barra-linha { grid-template-columns: 70px 1fr 96px; } .grande { font-size: 1.35rem; } }

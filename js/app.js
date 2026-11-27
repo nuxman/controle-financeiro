@@ -1,6 +1,9 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 import { criarCliente, validarConfig } from './supa.js';
 import * as c from './calc.js';
+import { lerPdf } from './import/pdf.js';
+import { textoDe, sha256, detectarTipo } from './import/texto.js';
+import { lerFaturaBradesco, lerFaturaNubank, planoFatura } from './import/faturas.js';
 
 // Impede que a página seja exibida dentro de outro site (clickjacking).
 if (window.top !== window.self) { document.body.textContent = ''; throw new Error('frame'); }
@@ -36,7 +39,8 @@ if (erroConfig) {
 }
 
 const db = criarCliente(SUPABASE_URL, SUPABASE_ANON_KEY);
-let dados = { contas: [], receitas: [], compromissos: [], parcelas: [], lancamentos: [], config: null, limites: [] };
+const VAZIO = () => ({ contas: [], receitas: [], compromissos: [], parcelas: [], lancamentos: [], config: null, limites: [], importacoes: [] });
+let dados = VAZIO();
 
 async function seguro(fn) {
   try { return await fn(); }
@@ -65,7 +69,7 @@ $('#form-login').addEventListener('submit', async (ev) => {
   catch (e) { aviso(e.message, 'ruim'); }
   finally { btn.disabled = false; }
 });
-$('#btn-sair').addEventListener('click', async () => { await db.sair(); dados = { contas: [], receitas: [], compromissos: [], parcelas: [], lancamentos: [], config: null, limites: [] }; mostrarLogin(); });
+$('#btn-sair').addEventListener('click', async () => { await db.sair(); dados = VAZIO(); $('#revisao').replaceChildren(); mostrarLogin(); });
 
 // ---------------- Abas ----------------
 $$('.abas button').forEach((b) => b.addEventListener('click', () => {
@@ -77,11 +81,13 @@ $$('.abas button').forEach((b) => b.addEventListener('click', () => {
 async function carregar() {
   $('#erro-config').hidden = true;
   const ok = await seguro(async () => {
-    const [contas, receitas, compromissos, parcelas, lancamentos, config, limites] = await Promise.all([
+    const [contas, receitas, compromissos, parcelas, lancamentos, config, limites, importacoes] = await Promise.all([
       db.listar('contas'), db.listar('receitas'), db.listar('compromissos'), db.listar('parcelas'),
       db.listar('lancamentos', 'data.desc'), db.listar('config', 'user_id.asc'), db.listar('limites', 'categoria.asc'),
+      db.listar('importacoes').catch(() => null), // null = 002_evolucao.sql ainda não rodou
     ]);
-    dados = { contas, receitas, compromissos, parcelas, lancamentos, config: config[0] || null, limites };
+    dados = { contas, receitas, compromissos, parcelas, lancamentos, config: config[0] || null, limites, importacoes: importacoes || [] };
+    semMigracao = importacoes === null;
     renderTudo();
     return true;
   });
@@ -314,6 +320,138 @@ $('#form-config').addEventListener('submit', async (ev) => {
     await carregar(); aviso('Preferências salvas.');
   });
 });
+
+// ---------------- Importar PDF ----------------
+// O PDF é lido aqui, no navegador. Só as linhas confirmadas vão para o Supabase.
+let semMigracao = false;
+const fi = $('#form-importar');
+const NOMES_TIPO = { fatura_bradesco: 'Fatura Bradesco', fatura_nubank: 'Fatura Nubank', contracheque: 'Contracheque' };
+const dataBR = (iso) => iso.split('-').reverse().join('/');
+const LEITORES = {};
+
+fi.arquivo.addEventListener('change', () => { $('#campo-senha').hidden = true; fi.senha.value = ''; $('#revisao').replaceChildren(); });
+fi.addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const arquivo = fi.arquivo.files[0];
+  if (!arquivo) return;
+  const senha = fi.senha.value;
+  fi.senha.value = ''; // a senha só vive nesta chamada
+  const btn = fi.querySelector('button'); btn.disabled = true;
+  $('#revisao').replaceChildren(h('p', { class: 'nota' }, 'Lendo o PDF…'));
+  try {
+    if (semMigracao) throw new Error('Rode supabase/002_evolucao.sql no SQL Editor antes de importar.');
+    let tipo = fi.tipo.value;
+    // Contracheque: só a página 1. As páginas 2 e 3 (memória de cálculo, com dependentes) nem são extraídas.
+    const paginas = await lerPdf(arquivo, senha, (pag1) => {
+      tipo = tipo || detectarTipo(textoDe(pag1));
+      return tipo === 'contracheque' ? 1 : 20;
+    });
+    $('#campo-senha').hidden = true;
+    if (!tipo || !LEITORES[tipo]) throw new Error('Não reconheci o tipo do documento. Escolha o tipo e tente de novo.');
+    const linhas = paginas.flat();
+    const hash = await sha256(tipo + '\n' + textoDe(linhas));
+    if (dados.importacoes.some((i) => i.hash === hash)) throw new Error('Este arquivo já foi importado.');
+    LEITORES[tipo](linhas, hash);
+  } catch (e) {
+    if (e.message === 'SENHA' || e.message === 'SENHA_ERRADA') {
+      $('#campo-senha').hidden = false; fi.senha.focus();
+      $('#revisao').replaceChildren(h('p', { class: 'nota atencao' }, e.message === 'SENHA' ? 'Este PDF tem senha. Digite a senha e clique em Ler PDF.' : 'Senha incorreta.'));
+    } else $('#revisao').replaceChildren(h('div', { class: 'card' }, h('p', { class: 'ruim' }, e.message || 'Erro ao ler o PDF.')));
+  } finally { btn.disabled = false; }
+});
+
+function caixaErros(erros, extra) {
+  return h('div', { class: 'card' }, h('h2', {}, 'Não dá para importar'),
+    h('ul', { class: 'fatos ruim' }, erros.map((e) => h('li', {}, e))), extra,
+    h('p', { class: 'nota' }, 'Nada foi gravado. Se o PDF estiver certo, o layout pode ter mudado e o leitor precisa de ajuste.'));
+}
+
+function concluido(msg) {
+  $('#revisao').replaceChildren(h('div', { class: 'card' }, h('p', { class: 'ok' }, msg)));
+  fi.reset(); aviso(msg);
+}
+
+// Grava a linha em `importacoes` e roda `criar(imp.id)`. Se `criar` falhar, apagar a importação desfaz
+// (on delete cascade) as linhas que ela já criou. Depois roda `ajustar()` (atualiza/apaga linhas antigas).
+async function gravarImportacao(registro, criar, ajustar) {
+  return seguro(async () => {
+    const [imp] = await db.inserir('importacoes', registro);
+    try { await criar(imp.id); } catch (e) { await db.apagar('importacoes', imp.id).catch(() => {}); throw e; }
+    await ajustar();
+    await carregar();
+    return true;
+  });
+}
+
+const ACAO = { lancamento: 'Gasto no dia da compra', na_fatura: 'Entra no valor da fatura', ignorar: 'Ignorada (fatura antes do início do controle)' };
+
+LEITORES.fatura_bradesco = (linhas, hash) => revisarFatura(lerFaturaBradesco(linhas), hash);
+LEITORES.fatura_nubank = (linhas, hash) => revisarFatura(lerFaturaNubank(linhas), hash);
+
+function revisarFatura(f, hash) {
+  const resumo = h('ul', { class: 'fatos' },
+    h('li', {}, `${NOMES_TIPO[f.tipo]} · vencimento ${f.vencimento ? dataBR(f.vencimento) : '—'} · total ${c.brl(f.total)}`),
+    f.saldoAnterior || f.pagamentos ? h('li', {}, `Saldo anterior ${c.brl(f.saldoAnterior)} e pagamentos ${c.brl(f.pagamentos)}: entram só na conferência, nunca como gasto.`) : null,
+    h('li', {}, `Soma dos lançamentos ${c.brl(f.conferencia.somaItens)} · esperado ${c.brl(f.conferencia.esperado)} · diferença ${c.brl(f.conferencia.diferenca)}`));
+  if (f.erros.length) { $('#revisao').replaceChildren(caixaErros(f.erros, resumo)); return; }
+
+  const p = planoFatura(f, dados);
+  const linhas = p.linhas.map((l) => {
+    const cat = h('select', { 'aria-label': 'Categoria' }, c.CATEGORIAS.map((k) => h('option', { value: k, selected: k === l.categoria }, k)));
+    cat.addEventListener('change', () => { l.categoria = cat.value; if (l.parcelaNova) l.parcelaNova.categoria = cat.value; });
+    let acao = ACAO[l.acao] + (l.parcela ? ` (parcela ${l.parcela.k}/${l.parcela.n})` : '');
+    if (l.parcelaNova) acao += ` · faltam ${l.restantes}x a partir de ${c.nomeMes(c.mesDe(l.parcelaNova.primeiro_mes))}` + (l.parcelaExistente ? ' (atualiza a já cadastrada)' : '');
+    else if (l.parcelaExistente) acao += ' · era a última: remove a cadastrada';
+    let escolha = null;
+    if (l.duplicata) {
+      escolha = h('select', { 'aria-label': 'Qual manter' }, h('option', { value: 'meu' }, 'Manter o já lançado'), h('option', { value: 'importado' }, 'Manter o importado'));
+      escolha.addEventListener('change', () => { l.manter = escolha.value; });
+    }
+    return h('tr', { class: l.duplicata ? 'dup' : null },
+      h('td', {}, dataBR(l.data).slice(0, 5)),
+      h('td', {}, l.descricao, l.duplicata ? h('small', {}, `Parecido com: ${dataBR(l.duplicata.data)} ${l.duplicata.descricao || l.duplicata.categoria} ${c.brl(l.duplicata.valor)}`) : null),
+      h('td', { class: 'd' }, c.brl(l.valor)),
+      h('td', {}, l.cartao.replace(/^\S+ final /, '')),
+      h('td', {}, l.acao === 'lancamento' || l.parcelaNova ? cat : '—'),
+      h('td', {}, acao, escolha));
+  });
+  const criarFatura = h('input', { type: 'checkbox', checked: true });
+  const blocoFatura = p.compromisso
+    ? h('label', { class: 'check' }, criarFatura, `Criar compromisso "${p.compromisso.descricao}" de ${c.brl(p.compromisso.valor)} em ${c.nomeMes(c.mesDe(p.compromisso.mes))}` +
+      (p.compromissoExistente ? ' (atualiza o que já existe)' : '') + '. Desmarque se esta fatura já foi paga.')
+    : h('p', { class: 'nota' }, 'Nenhum compromisso de fatura será criado (tudo já conta como gasto, ou a fatura vence antes do início do controle).');
+  const btn = h('button', { type: 'button' }, 'Confirmar importação');
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    if (await gravarFatura(f, p, hash, criarFatura.checked)) concluido('Fatura importada.');
+    else btn.disabled = false;
+  });
+  $('#revisao').replaceChildren(h('div', { class: 'card revisao' }, h('h2', {}, 'Revisar antes de gravar'), resumo,
+    h('div', { class: 'tabela' }, h('table', {},
+      h('thead', {}, h('tr', {}, ['Data', 'Descrição', 'Valor', 'Cartão', 'Categoria', 'O que acontece'].map((t, i) => h('th', { class: i === 2 ? 'd' : null }, t)))),
+      h('tbody', {}, linhas))),
+    blocoFatura, btn));
+}
+
+function gravarFatura(f, p, hash, criarFatura) {
+  const comp = p.compromisso && criarFatura ? p.compromisso : null;
+  return gravarImportacao({ hash, tipo: f.tipo, competencia: f.competencia + '-01', total: f.total }, async (id) => {
+    const novos = p.linhas.filter((l) => l.acao === 'lancamento' && !(l.duplicata && l.manter === 'meu'))
+      .map((l) => ({ data: l.data, valor: l.valor, descricao: l.descricao, categoria: l.categoria, meio: 'credito', importacao_id: id }));
+    if (novos.some((n) => !(n.valor > 0 && n.valor < 1000000) || !c.CATEGORIAS.includes(n.categoria))) throw new Error('Linha com valor ou categoria inválidos.');
+    if (novos.length) await db.inserir('lancamentos', novos);
+    const parcNovas = p.linhas.filter((l) => l.parcelaNova && !l.parcelaExistente).map((l) => ({ ...l.parcelaNova, importacao_id: id }));
+    if (parcNovas.length) await db.inserir('parcelas', parcNovas);
+    if (comp && !p.compromissoExistente) await db.inserir('compromissos', { ...comp, importacao_id: id });
+  }, async () => {
+    for (const l of p.linhas) {
+      if (l.parcelaExistente && l.parcelaNova) await db.atualizar('parcelas', l.parcelaExistente, { primeiro_mes: l.parcelaNova.primeiro_mes, quantidade: l.parcelaNova.quantidade, valor_parcela: l.parcelaNova.valor_parcela });
+      else if (l.parcelaExistente) await db.apagar('parcelas', l.parcelaExistente);
+      if (l.duplicata && l.manter === 'importado') await db.apagar('lancamentos', l.duplicata.id);
+    }
+    if (p.compromissoExistente) await (comp ? db.atualizar('compromissos', p.compromissoExistente, { valor: comp.valor }) : db.apagar('compromissos', p.compromissoExistente));
+  });
+}
 
 // ---------------- Início ----------------
 if (db.logado) mostrarApp(); else mostrarLogin();

@@ -1,0 +1,27 @@
+                    BRADESCO CARTÕES
+                    Fatura do cartão de crédito
+
+  Cliente: CICLANO EXEMPLO
+  Vencimento: 10/12/2026                      Total da fatura: R$ 1.616,10
+
+  Resumo da fatura
+  Total da fatura anterior                    700,00
+  Pagamento efetuado                          700,00
+  Compras e débitos                           1.616,10
+
+  Data      Histórico de lançamentos                             Cidade             US$          R$
+  05 NOV    PAGTO. POR DEB EM C/C                                                                -700,00
+            SALDO ANTERIOR                                                                       700,00
+
+  Gastos referentes ao cartão: Final 1111 | CICLANO EXEMPLO
+  28 OUT    SUPERMERCADO FICTICIO                                PORTO VELHO                     250,30
+  02 NOV    POSTO GASOLINA TESTE                                 PORTO VELHO                     180,00
+  10 NOV    LOJA DE ROUPAS EXEMPLO (03/10)                       SAO PAULO                       120,00
+  15 NOV    NETFLIX.COM                                                                          55,90
+
+  Gastos referentes ao cartão: Final 2222 | BELTRANA EXEMPLO
+  20 NOV    FARMACIA IMAGINARIA                                  PORTO VELHO                     89,90
+  22 NOV    ELETRONICOS FAKE LTDA (01/12)                        MANAUS                          300,00
+  25 NOV    RESTAURANTE INVENTADO                                PORTO VELHO                     620,00
+
+  Total para Final 2222                                                                          1.009,90

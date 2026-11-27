@@ -1,0 +1,8 @@
+  Fatura aberta - app Bradesco
+  Vencimento: 10/01/2027
+  Total da fatura                                     R$ 1.950,00
+
+            SALDO ANTERIOR                                          1.500,00
+  Gastos referentes ao cartão: Final 1111 | CICLANO EXEMPLO
+  01 DEZ    PADARIA DE TESTE                                         150,00
+  03 DEZ    UBER *TRIP FICTICIA                                      300,00

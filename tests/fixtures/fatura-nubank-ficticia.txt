@@ -1,0 +1,22 @@
+  Nu Pagamentos S.A.
+  FATURA 15 DEZ 2026                         EMISSÃO E ENVIO 08 DEZ 2026
+
+  Olá, Fulano Exemplo
+  Esta é a sua fatura de dezembro, no valor de R$ 899,40
+  Data do vencimento: 15 DEZ 2026
+
+  RESUMO DA FATURA ATUAL
+  Fatura anterior                                       R$ 400,00
+  Pagamento recebido                                    −R$ 400,00
+  Total de compras de todos os cartões                  R$ 929,40
+  Outros lançamentos                                    −R$ 30,00
+  Total a pagar                                         R$ 899,40
+
+  TRANSAÇÕES DE 08 NOV A 08 DEZ
+  10 NOV    Pagamento em 10 NOV                                  −R$ 400,00
+  12 NOV    •••• 3333    Mercado Ficticio                        R$ 210,50
+  15 NOV    •••• 3333    Ifood *Lanche Teste                     R$ 48,90
+  18 NOV    •••• 3333    Curso Online Exemplo - Parcela 2/6      R$ 150,00
+  25 NOV    •••• 4444    Spotify Fake                            R$ 20,00
+  28 NOV    •••• 4444    Loja Imaginaria - Parcela 1/3           R$ 500,00
+  30 NOV    Ajuste a crédito                                     −R$ 30,00

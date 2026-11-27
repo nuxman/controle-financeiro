@@ -1,7 +1,7 @@
 // Cliente mínimo para Supabase (Auth + REST), sem bibliotecas externas.
 // Motivo: evitar carregar código de CDN de terceiros numa página com dados financeiros.
 
-const TABELAS = new Set(['contas', 'receitas', 'compromissos', 'parcelas', 'lancamentos', 'config', 'limites']);
+const TABELAS = new Set(['contas', 'receitas', 'compromissos', 'parcelas', 'lancamentos', 'config', 'limites', 'importacoes']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CHAVE_SESSAO = 'cf.sessao';
 
