@@ -111,11 +111,18 @@ export function lerFaturaNubank(linhas) {
 }
 
 // ---------------- Plano: o que cada linha vira ----------------
-// acao: 'lancamento' (compra à vista, no dia da compra) | 'na_fatura' (entra no compromisso da fatura)
-//       | 'ignorar' (antes do início do controle e fatura fora do período)
-// Parcelada (k/n): a parcela k entra no compromisso da fatura; as n−k restantes viram uma linha em `parcelas`
-// a partir do mês seguinte ao vencimento (ou atualizam a que já existe).
+// Regra do início do controle (config.mes_inicio), pela data da COMPRA:
+// - compra antes do início: entra no compromisso da fatura (acao 'na_fatura'), inclusive a parcela k deste mês;
+// - compra a partir do início: só vira lançamento (à vista) ou parcela (parcelada, já contando a deste mês).
+// Assim, fatura só com compras antigas vira um compromisso inteiro; fatura mista vira compromisso só da parte antiga;
+// fatura só com compras novas não vira compromisso.
+// acao: 'lancamento' | 'parcela' | 'na_fatura' | 'credito' (estorno depois do início: não é gravado)
+//       | 'ignorar' (fatura vence antes do início)
 const dias = (a, b) => Math.abs(Date.parse(a) - Date.parse(b)) / 86400000;
+const chave = (s) => normal(s || '').replace(/\s+/g, ' ').trim();
+// "Bradesco final 1111", "nubank 1111" → "1111". Sem 4 dígitos no fim, compara o texto todo.
+const finalCartao = (s) => (chave(s).match(/(\d{4})\D*$/) || [, chave(s)])[1];
+const ultimoMes = (p) => addMeses(mesDe(p.primeiro_mes), Number(p.quantidade) - 1);
 
 export function planoFatura(f, d) {
   const inicio = d.config?.mes_inicio ? mesDe(d.config.mes_inicio) : '0000-00';
@@ -126,19 +133,29 @@ export function planoFatura(f, d) {
   const existentes = d.lancamentos || [];
   const linhas = f.itens.map((it, i) => {
     const l = { i, ...it, categoria: categorizar(it.descricao), restantes: 0, parcelaExistente: null, duplicata: null };
+    // A parcela k caiu nesta fatura, então a compra foi no máximo k−1 meses antes (corrige o ano quando o PDF só traz dia/mês).
+    const mesCompra = it.parcela ? [mesDe(it.data), addMeses(venc, 1 - it.parcela.k)].sort()[0] : mesDe(it.data);
+    const antiga = mesCompra < inicio;
     if (it.parcela && it.valor > 0) {
       l.restantes = it.parcela.n - it.parcela.k;
-      l.acao = comFatura ? 'na_fatura' : 'ignorar';
-      const ex = (d.parcelas || []).find((p) => normal(p.descricao) === normal(it.descricao) && Math.abs(Number(p.valor_parcela) - it.valor) <= 0.01 && normal(p.cartao || '') === normal(it.cartao));
-      l.parcelaExistente = ex ? ex.id : null; // restantes = 0 e existe: era a última, a cadastrada sai
-      if (l.restantes > 0) {
-        l.parcelaNova = { descricao: it.descricao, categoria: l.categoria, cartao: it.cartao.slice(0, 30), valor_parcela: it.valor, primeiro_mes: addMeses(venc, 1) + '-01', quantidade: Math.min(48, l.restantes) };
-      }
-    } else if (it.valor > 0 && mesDe(it.data) >= inicio) {
+      l.acao = !comFatura ? 'ignorar' : antiga ? 'na_fatura' : 'parcela';
+      // Casa por valor da parcela, final do cartão e último mês (= parcelas restantes); a descrição só desempata.
+      const fim = addMeses(venc, l.restantes);
+      const cands = (d.parcelas || []).filter((p) => !usados.has(p.id) && Math.abs(Number(p.valor_parcela) - it.valor) <= 0.01 &&
+        finalCartao(p.cartao) === finalCartao(it.cartao) && ultimoMes(p) === fim);
+      const ex = cands.find((p) => chave(p.descricao) === chave(it.descricao)) || cands[0];
+      if (ex) { usados.add(ex.id); l.parcelaExistente = ex.id; }
+      const desde = l.acao === 'parcela' ? 0 : 1; // compra nova: a parcela deste mês também é parcela
+      const qtd = l.restantes + 1 - desde;
+      if (qtd > 0) l.parcelaNova = { descricao: it.descricao, categoria: l.categoria, cartao: it.cartao.slice(0, 30), valor_parcela: it.valor, primeiro_mes: addMeses(venc, desde) + '-01', quantidade: Math.min(48, qtd) };
+      // sem parcelaNova e com existente: era a última e já entrou na fatura, a cadastrada sai
+    } else if (!comFatura) l.acao = 'ignorar';
+    else if (antiga) l.acao = 'na_fatura'; // compra ou estorno antes do início: abate do que se paga na fatura
+    else if (it.valor > 0) {
       l.acao = 'lancamento';
       const dup = existentes.find((m) => !usados.has(m.id) && Math.abs(Number(m.valor) - it.valor) <= 0.01 && dias(m.data, it.data) <= 2);
       if (dup) { usados.add(dup.id); l.duplicata = dup; l.manter = 'meu'; }
-    } else l.acao = comFatura ? 'na_fatura' : 'ignorar'; // compra antes do início ou crédito/estorno: abate do que se paga na fatura
+    } else l.acao = 'credito';
     return l;
   });
   const valorFatura = soma(linhas.filter((l) => l.acao === 'na_fatura'), (l) => l.valor);
@@ -148,5 +165,10 @@ export function planoFatura(f, d) {
     : null;
   // Mesma fatura importada antes (ex.: a versão aberta): atualiza em vez de criar outra.
   const ex = (d.compromissos || []).find((c) => !c.recorrente && c.descricao === descricao && mesDe(c.mes || '') === venc);
-  return { linhas, compromisso, compromissoExistente: ex ? ex.id : null };
+  // Compromisso pontual digitado à mão, em mês igual ou posterior ao vencimento, com valor a ±1% do total
+  // ou do compromisso calculado: provavelmente é esta mesma fatura.
+  const alvos = [f.total, compromisso?.valor].filter((v) => v > 0);
+  const possivelManual = (d.compromissos || []).find((c) => !c.recorrente && c.id !== ex?.id && venc <= mesDe(c.mes || '') &&
+    alvos.some((v) => Math.abs(Number(c.valor) - v) <= v * 0.01)) || null;
+  return { linhas, compromisso, compromissoExistente: ex ? ex.id : null, possivelManual };
 }

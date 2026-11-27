@@ -452,7 +452,7 @@ async function gravarImportacao(registro, criar, ajustar) {
   });
 }
 
-const ACAO = { lancamento: 'Gasto no dia da compra', na_fatura: 'Entra no valor da fatura', ignorar: 'Ignorada (fatura antes do início do controle)' };
+const ACAO = { lancamento: 'Gasto no dia da compra', parcela: 'Vira parcela', na_fatura: 'Entra no compromisso da fatura (compra antes do início)', credito: 'Crédito/estorno: não é gravado', ignorar: 'Ignorada (fatura antes do início do controle)' };
 
 LEITORES.fatura_bradesco = (linhas, hash) => revisarFatura(lerFaturaBradesco(linhas), hash);
 LEITORES.fatura_nubank = (linhas, hash) => revisarFatura(lerFaturaNubank(linhas), hash);
@@ -469,7 +469,7 @@ function revisarFatura(f, hash) {
     const cat = h('select', { 'aria-label': 'Categoria' }, c.CATEGORIAS.map((k) => h('option', { value: k, selected: k === l.categoria }, k)));
     cat.addEventListener('change', () => { l.categoria = cat.value; if (l.parcelaNova) l.parcelaNova.categoria = cat.value; });
     let acao = ACAO[l.acao] + (l.parcela ? ` (parcela ${l.parcela.k}/${l.parcela.n})` : '');
-    if (l.parcelaNova) acao += ` · faltam ${l.restantes}x a partir de ${c.nomeMes(c.mesDe(l.parcelaNova.primeiro_mes))}` + (l.parcelaExistente ? ' (atualiza a já cadastrada)' : '');
+    if (l.parcelaNova) acao += ` · ${l.parcelaNova.quantidade}x a partir de ${c.nomeMes(c.mesDe(l.parcelaNova.primeiro_mes))}` + (l.parcelaExistente ? ' · parcela já cadastrada, será atualizada' : '');
     else if (l.parcelaExistente) acao += ' · era a última: remove a cadastrada';
     let escolha = null;
     if (l.duplicata) {
@@ -488,7 +488,9 @@ function revisarFatura(f, hash) {
   const blocoFatura = p.compromisso
     ? h('label', { class: 'check' }, criarFatura, `Criar compromisso "${p.compromisso.descricao}" de ${c.brl(p.compromisso.valor)} em ${c.nomeMes(c.mesDe(p.compromisso.mes))}` +
       (p.compromissoExistente ? ' (atualiza o que já existe)' : '') + '. Desmarque se esta fatura já foi paga.')
-    : h('p', { class: 'nota' }, 'Nenhum compromisso de fatura será criado (tudo já conta como gasto, ou a fatura vence antes do início do controle).');
+    : h('p', { class: 'nota' }, 'Nenhum compromisso de fatura será criado (todas as compras são do início do controle em diante e já contam como gasto ou parcela, ou a fatura vence antes do início).');
+  const m = p.possivelManual;
+  const alertaManual = m ? h('p', { class: 'alerta' }, `Atenção: já existe o compromisso pontual "${m.descricao}" de ${c.brl(m.valor)} em ${c.nomeMes(c.mesDe(m.mes))}, com valor parecido e mês igual ou depois deste vencimento. Esta fatura provavelmente já foi cadastrada à mão: apague um dos dois ou desmarque o compromisso abaixo.`) : null;
   const btn = h('button', { type: 'button' }, 'Confirmar importação');
   btn.addEventListener('click', async () => {
     btn.disabled = true;
@@ -499,7 +501,7 @@ function revisarFatura(f, hash) {
     h('div', { class: 'tabela' }, h('table', {},
       h('thead', {}, h('tr', {}, ['Data', 'Descrição', 'Valor', 'Cartão', 'Categoria', 'O que acontece'].map((t, i) => h('th', { class: i === 2 ? 'd' : null }, t)))),
       h('tbody', {}, linhas))),
-    blocoFatura, btn));
+    alertaManual, blocoFatura, btn));
 }
 
 function gravarFatura(f, p, hash, criarFatura) {

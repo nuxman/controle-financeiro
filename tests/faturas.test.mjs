@@ -66,39 +66,89 @@ test('Nubank: parcelas, ajuste a crédito, pagamento fora da soma', () => {
   assert.ok(!f.itens.some((i) => /Pagamento/.test(i.descricao)));
 });
 
-test('plano: à vista vira lançamento, parcelada vira parcelas restantes, k-ésima parcela vai na fatura', () => {
-  const f = lerFaturaBradesco(linhasDeTexto(fx('fatura-bradesco-ficticia.txt')));
-  const p = planoFatura(f, dados());
-  const por = (re) => p.linhas.find((l) => re.test(l.descricao));
-  assert.equal(por(/ROUPAS/).acao, 'na_fatura');
-  assert.deepEqual(por(/ROUPAS/).parcelaNova, { descricao: 'LOJA DE ROUPAS EXEMPLO', categoria: 'Compras', cartao: 'Bradesco final 1111', valor_parcela: 120, primeiro_mes: '2027-01-01', quantidade: 7 });
-  assert.equal(por(/ELETRONICOS/).parcelaNova.quantidade, 11);
-  assert.equal(por(/SUPERMERCADO/).acao, 'na_fatura'); // compra de outubro, antes do início (nov)
-  assert.equal(por(/NETFLIX/).acao, 'lancamento');
-  assert.equal(por(/NETFLIX/).categoria, 'Assinaturas');
-  // compromisso = parcelas deste mês + compras antes do início
-  assert.equal(p.compromisso.valor, 120 + 300 + 250.30);
+const bradesco = () => lerFaturaBradesco(linhasDeTexto(fx('fatura-bradesco-ficticia.txt')));
+const por = (p, re) => p.linhas.find((l) => re.test(l.descricao));
+
+test('caso 1: todas as compras antes do início → a fatura inteira vira compromisso', () => {
+  const p = planoFatura(bradesco(), dados({ config: { mes_inicio: '2026-12-01' } }));
+  assert.ok(p.linhas.every((l) => l.acao === 'na_fatura'));
+  assert.equal(p.compromisso.valor, 1616.10);
   assert.equal(p.compromisso.mes, '2026-12-01');
+  // parcelas futuras continuam valendo, a partir do mês seguinte (a deste mês está no compromisso)
+  assert.deepEqual(por(p, /ROUPAS/).parcelaNova, { descricao: 'LOJA DE ROUPAS EXEMPLO', categoria: 'Compras', cartao: 'Bradesco final 1111', valor_parcela: 120, primeiro_mes: '2027-01-01', quantidade: 7 });
+  assert.equal(por(p, /ELETRONICOS/).parcelaNova.quantidade, 11);
+});
+
+test('caso 2: fatura mista → compromisso só da parte antes do início; o resto vira lançamento/parcela', () => {
+  const p = planoFatura(bradesco(), dados()); // início em nov
+  assert.equal(por(p, /SUPERMERCADO/).acao, 'na_fatura'); // 28 out
+  // (03/10) com data de nov: a compra foi em out ou antes, então é antiga
+  assert.equal(por(p, /ROUPAS/).acao, 'na_fatura');
+  assert.equal(por(p, /ROUPAS/).parcelaNova.primeiro_mes, '2027-01-01');
+  assert.equal(por(p, /NETFLIX/).acao, 'lancamento');
+  assert.equal(por(p, /NETFLIX/).categoria, 'Assinaturas');
+  const el = por(p, /ELETRONICOS/); // 22 nov (01/12): compra nova, a parcela deste mês também é parcela
+  assert.equal(el.acao, 'parcela');
+  assert.equal(el.parcelaNova.primeiro_mes, '2026-12-01');
+  assert.equal(el.parcelaNova.quantidade, 12);
+  assert.equal(p.compromisso.valor, 250.30 + 120);
+  // nada contado duas vezes: compromisso + lançamentos + parcela deste mês = total das compras
+  const lanc = p.linhas.filter((l) => l.acao === 'lancamento').reduce((s, l) => s + l.valor, 0);
+  assert.equal(Math.round((p.compromisso.valor + lanc + 300) * 100) / 100, 1616.10);
+});
+
+test('caso 3: todas as compras a partir do início → nenhum compromisso', () => {
+  const f = lerFaturaNubank(linhasDeTexto(fx('fatura-nubank-ficticia.txt')));
+  const p = planoFatura(f, dados());
+  assert.equal(p.compromisso, null);
+  assert.ok(p.linhas.every((l) => l.acao !== 'na_fatura'));
+  assert.equal(por(p, /Ajuste/).acao, 'credito');
+  assert.deepEqual(por(p, /Loja Imaginaria/).parcelaNova, { descricao: 'Loja Imaginaria', categoria: 'Compras', cartao: 'Nubank final 4444', valor_parcela: 500, primeiro_mes: '2026-12-01', quantidade: 3 });
+  assert.equal(por(p, /Curso/).acao, 'parcela'); // 18 nov, 2/6 em dez: compra no máximo em nov
+  assert.equal(por(p, /Curso/).parcelaNova.quantidade, 5);
 });
 
 test('plano: fatura que vence antes do início não gera nada', () => {
-  const f = lerFaturaBradesco(linhasDeTexto(fx('fatura-bradesco-ficticia.txt')));
-  const p = planoFatura(f, dados({ config: { mes_inicio: '2027-01-01' } }));
+  const p = planoFatura(bradesco(), dados({ config: { mes_inicio: '2027-01-01' } }));
   assert.equal(p.compromisso, null);
   assert.ok(p.linhas.every((l) => l.acao === 'ignorar'));
-  assert.ok(p.linhas.find((l) => /ROUPAS/.test(l.descricao)).parcelaNova); // parcelas futuras continuam valendo
+  assert.ok(por(p, /ROUPAS/).parcelaNova); // parcelas futuras continuam valendo
 });
 
-test('plano: acha lançamento digitado à mão e parcela existente', () => {
-  const f = lerFaturaBradesco(linhasDeTexto(fx('fatura-bradesco-ficticia.txt')));
-  const d = dados({
-    lancamentos: [{ id: 'a', data: '2026-11-17', valor: 55.9, descricao: 'netflix' }, { id: 'b', data: '2026-11-20', valor: 55.9 }],
-    parcelas: [{ id: 'p1', descricao: 'Loja de roupas exemplo', valor_parcela: 120, cartao: 'Bradesco final 1111' }],
-  });
-  const p = planoFatura(f, d);
-  const n = p.linhas.find((l) => /NETFLIX/.test(l.descricao));
-  assert.equal(n.duplicata.id, 'a'); // 2 dias de diferença; o de 5 dias não conta
-  assert.equal(p.linhas.find((l) => /ROUPAS/.test(l.descricao)).parcelaExistente, 'p1');
+test('plano: acha lançamento digitado à mão', () => {
+  const d = dados({ lancamentos: [{ id: 'a', data: '2026-11-17', valor: 55.9, descricao: 'netflix' }, { id: 'b', data: '2026-11-20', valor: 55.9 }] });
+  assert.equal(por(planoFatura(bradesco(), d), /NETFLIX/).duplicata.id, 'a'); // 2 dias de diferença; o de 5 dias não conta
+});
+
+test('parcela existente: casa por valor, final do cartão e restantes; ignora caixa, acento e espaços', () => {
+  // ROUPAS 03/10 em dez/26: faltam 7 depois desta → última em jul/27
+  const base = { valor_parcela: 120, cartao: 'bradesco 1111' };
+  const casa = (parcelas) => por(planoFatura(bradesco(), dados({ parcelas })), /ROUPAS/).parcelaExistente;
+  assert.equal(casa([{ id: 'p1', descricao: '  Loja de   Roupás exemplo ', primeiro_mes: '2027-01-01', quantidade: 7, ...base }]), 'p1');
+  // descrição diferente ainda casa (só desempata); feita à mão contando a de dez: mesma última parcela
+  assert.equal(casa([{ id: 'p2', descricao: 'Roupa', primeiro_mes: '2026-12-01', quantidade: 8, ...base }]), 'p2');
+  // desempate pela descrição
+  assert.equal(casa([{ id: 'x', descricao: 'Outra loja', primeiro_mes: '2027-01-01', quantidade: 7, ...base },
+    { id: 'p3', descricao: 'LOJA DE ROUPAS EXEMPLO', primeiro_mes: '2027-01-01', quantidade: 7, ...base }]), 'p3');
+  // não casa: restantes, cartão ou valor diferentes
+  assert.equal(casa([{ id: 'n1', descricao: 'LOJA DE ROUPAS EXEMPLO', primeiro_mes: '2027-01-01', quantidade: 6, ...base }]), null);
+  assert.equal(casa([{ id: 'n2', descricao: 'LOJA DE ROUPAS EXEMPLO', primeiro_mes: '2027-01-01', quantidade: 7, valor_parcela: 120, cartao: 'Bradesco final 2222' }]), null);
+  assert.equal(casa([{ id: 'n3', descricao: 'LOJA DE ROUPAS EXEMPLO', primeiro_mes: '2027-01-01', quantidade: 7, valor_parcela: 120.02, cartao: '1111' }]), null);
+  // uma parcela cadastrada não casa com duas linhas da fatura
+  const f = bradesco(); f.itens.push({ ...f.itens.find((i) => /ROUPAS/.test(i.descricao)) });
+  const p = planoFatura(f, dados({ parcelas: [{ id: 'p1', descricao: 'x', primeiro_mes: '2027-01-01', quantidade: 7, ...base }] }));
+  assert.deepEqual(p.linhas.filter((l) => /ROUPAS/.test(l.descricao)).map((l) => l.parcelaExistente), ['p1', null]);
+});
+
+test('aviso: compromisso pontual digitado à mão com valor próximo, em mês igual ou depois do vencimento', () => {
+  const manual = (mes, valor, extra = {}) => planoFatura(bradesco(), dados({ compromissos: [{ id: 'm', descricao: 'cartão', recorrente: false, mes, valor, ...extra }] })).possivelManual;
+  assert.equal(manual('2026-12-01', 1600).id, 'm'); // ~1% do total (1.616,10)
+  assert.equal(manual('2027-01-01', 1616.10).id, 'm');
+  assert.equal(manual('2026-12-01', 371).id, 'm'); // ~ o compromisso calculado (370,30)
+  assert.equal(manual('2026-11-01', 1616.10), null); // mês antes do vencimento
+  assert.equal(manual('2026-12-01', 1500), null); // longe
+  assert.equal(manual('2026-12-01', 1616.10, { recorrente: true }), null);
+  assert.equal(manual('2026-12-01', 1616.10, { descricao: 'Fatura Bradesco 12/2026' }), null); // é a importada antes: atualiza, sem aviso
 });
 
 test('detecção do tipo e hash', async () => {
