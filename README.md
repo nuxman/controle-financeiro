@@ -19,7 +19,7 @@ Compras no crédito contam no mês em que você compra (não quando a fatura che
 
 ### 1. Supabase (projeto separado do app de remédios)
 1. Em supabase.com, crie um **novo projeto** só para este app. Assim, um problema num app não expõe os dados do outro.
-2. **SQL Editor** → cole e rode `supabase/schema.sql` e depois `supabase/002_evolucao.sql` (importação de PDFs; pode rodar de novo sem erro).
+2. **SQL Editor** → cole e rode `supabase/schema.sql` e depois `supabase/002_evolucao.sql` (importação de PDFs e contas em outra moeda; pode rodar de novo sem erro).
 3. Rode `supabase/verificar_seguranca.sql`. Todas as linhas devem mostrar `rls = true`, `rls_forcado = true`, `policies = 1`, `anon_pode_ler = false` e `trava_dono = true`.
 4. **Authentication → Sign In / Providers → Email:** desligue **"Allow new users to sign up"**.
 5. **Authentication → Users → Add user:** crie o seu usuário com uma senha forte (12+ caracteres) e marque "Auto Confirm".
@@ -36,6 +36,12 @@ Em **Project Settings → API** (ou **API Keys**), copie a **Project URL** e a c
 1. Envie os arquivos para o repositório.
 2. **Settings → Pages:** Source = *Deploy from a branch*, branch `main`, pasta `/ (root)`.
 3. **Settings → Code security:** ative **Secret scanning** e **Push protection**.
+
+## Contas em dólar e bitcoin
+
+Em **Cadastros → Contas**, escolha a moeda (BRL, USD ou BTC). Para USD/BTC informe só a **quantidade** e a **cotação em R$**: o saldo em reais é quantidade × cotação. Essas contas são sempre do tipo **investimento**, por isso não entram no saldo inicial nem no disponível (só na reserva). O botão **saldo** de uma conta em USD/BTC pede a nova cotação; **Atualizar cotação** busca as duas na AwesomeAPI (veja a CSP).
+
+Para bitcoin (ex.: carteira Tangem) o app guarda **só a quantidade**. Nunca digite seed phrase, chave privada nem PIN, e o app não consulta endereço de carteira em blockchain.
 
 ## Importar PDF (aba Importar)
 
@@ -79,7 +85,8 @@ PDF com senha: o app pede a senha num campo de senha, usa só para abrir o arqui
 | Valores absurdos | `CHECK` no banco (valor > 0, limites de tamanho, mês sempre dia 1) |
 | CSRF | Não se aplica: a autenticação vai no cabeçalho `Authorization`, não em cookie |
 
-**CSP** (`<meta>` no `index.html`): `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://*.supabase.co; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'`.
+**CSP** (`<meta>` no `index.html`): `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://*.supabase.co https://economia.awesomeapi.com.br; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'`.
+- `connect-src … https://economia.awesomeapi.com.br`: só para o botão opcional **Atualizar cotação** (dólar e bitcoin). Escolhida por ser uma única API pública brasileira, sem chave, com CORS aberto, que devolve USD-BRL e BTC-BRL numa só chamada (`/json/last/USD-BRL,BTC-BRL`). A requisição não leva nenhum dado seu (sem cookies, sem referrer, sem quantidade). Se ela falhar, a cotação manual continua funcionando. Para não usar, apague esse domínio da CSP: o botão passa a avisar que não conseguiu e segue o manual.
 - `worker-src 'self'`: o pdf.js lê o PDF num Web Worker (`vendor/pdfjs/pdf.worker.min.mjs`), carregado do próprio site. Nenhum outro acréscimo foi necessário: o pdf.js não faz requisição de rede porque recebe os bytes do arquivo direto.
 
 **Limitações conhecidas**

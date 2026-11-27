@@ -219,3 +219,17 @@ export function nomeMes(mes) {
   const [a, m] = mes.split('-');
   return `${n[Number(m) - 1]}/${a.slice(2)}`;
 }
+
+// ---------------- Contas em outra moeda ----------------
+// Saldo em R$ = quantidade × cotação. Só a quantidade é guardada (nada de chave, seed ou endereço).
+export const MOEDAS = ['BRL', 'USD', 'BTC'];
+export const saldoEmReais = (quantidade, cotacao) => r2(num(quantidade) * num(cotacao));
+// Resposta da AwesomeAPI (/json/last/USD-BRL,BTC-BRL) → { USD: 5.1, BTC: 500000 }. Ignora o que não for número válido.
+export function cotacoesDaApi(json) {
+  const out = {};
+  for (const m of ['USD', 'BTC']) {
+    const v = Number(json?.[m + 'BRL']?.bid);
+    if (v > 0 && v < 100000000) out[m] = v;
+  }
+  return out;
+}

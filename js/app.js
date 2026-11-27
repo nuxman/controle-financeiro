@@ -241,9 +241,10 @@ const mesParaData = (v) => (v ? v + '-01' : null);
 const dataParaMes = (v) => (v ? String(v).slice(0, 7) : '');
 
 const CADASTROS = [
-  { tabela: 'contas', titulo: 'Contas e saldos', ajuda: 'Atualize o saldo quando conferir no banco.',
-    campos: [['nome', 'Nome', 'text'], ['tipo', 'Tipo', ['corrente', 'reserva', 'investimento']], ['saldo', 'Saldo (R$)', 'money']],
-    linha: (x) => [`${x.nome} · ${x.tipo}`, c.brl(x.saldo)] },
+  { tabela: 'contas', titulo: 'Contas e saldos', ajuda: 'Atualize o saldo quando conferir no banco. Dólar ou bitcoin: informe só a quantidade e a cotação (em R$); a conta vira investimento e não entra no saldo inicial nem no disponível. Nunca digite seed phrase, chave privada ou PIN.',
+    campos: [['nome', 'Nome', 'text'], ['tipo', 'Tipo', ['corrente', 'reserva', 'investimento']], ['moeda', 'Moeda', c.MOEDAS], ['saldo', 'Saldo (R$, se em reais)', 'money?'], ['quantidade', 'Quantidade (USD/BTC)', 'qtd'], ['cotacao', 'Cotação em R$ (USD/BTC)', 'qtd']],
+    linha: (x) => [`${x.nome} · ${x.tipo}` + (x.moeda && x.moeda !== 'BRL' ? ` · ${Number(x.quantidade).toLocaleString('pt-BR', { maximumFractionDigits: 8 })} ${x.moeda} × ${c.brl(x.cotacao)}${x.cotacao_em ? ' em ' + dataBR(x.cotacao_em) : ''}` : ''), c.brl(x.saldo)],
+    ajustar: normalizarConta },
   { tabela: 'receitas', titulo: 'Receitas', ajuda: 'Salário (recorrente) e entradas pontuais como 13º, bônus ou valores a receber.',
     campos: [['descricao', 'Descrição', 'text'], ['valor', 'Valor (R$)', 'money'], ['recorrente', 'Todo mês', 'bool'], ['mes', 'Mês (se pontual)', 'month'], ['inicio', 'A partir de', 'month'], ['fim', 'Até', 'month']],
     linha: (x) => [`${x.descricao} · ${x.recorrente ? 'mensal' : c.nomeMes(dataParaMes(x.mes))}`, c.brl(x.valor)] },
@@ -263,6 +264,8 @@ function campo([nome, rotulo, tipo]) {
   if (Array.isArray(tipo)) input = h('select', { name: nome }, tipo.map((o) => h('option', { value: o }, o)));
   else if (tipo === 'bool') return h('label', { class: 'check' }, h('input', { type: 'checkbox', name: nome }), rotulo);
   else if (tipo === 'money') input = h('input', { type: 'number', name: nome, step: '0.01', min: nome === 'saldo' ? '-9999999' : '0.01', max: '99999999', required: true, inputmode: 'decimal' });
+  else if (tipo === 'money?') input = h('input', { type: 'number', name: nome, step: '0.01', min: '-9999999', max: '99999999', inputmode: 'decimal' });
+  else if (tipo === 'qtd') input = h('input', { type: 'number', name: nome, step: 'any', min: '0', max: '99999999', inputmode: 'decimal' });
   else if (tipo === 'int') input = h('input', { type: 'number', name: nome, step: '1', min: '1', max: '48', required: true });
   else if (tipo === 'month') input = h('input', { type: 'month', name: nome });
   else input = h('input', { type: 'text', name: nome, maxlength: '80', required: nome !== 'cartao' });
@@ -280,14 +283,17 @@ function renderCadastros() {
         if (tipo === 'bool') linha[nome] = el.checked;
         else if (tipo === 'month') linha[nome] = mesParaData(el.value);
         else if (tipo === 'money' || tipo === 'int') linha[nome] = Number(el.value);
+        else if (tipo === 'money?' || tipo === 'qtd') linha[nome] = el.value === '' ? null : Number(el.value);
         else linha[nome] = el.value.trim() || null;
       }
       if ('recorrente' in linha && !linha.recorrente && !linha.mes) { aviso('Informe o mês ou marque "Todo mês".', 'atencao'); return; }
+      if (cfg.ajustar) { const erro = cfg.ajustar(linha); if (erro) { aviso(erro, 'atencao'); return; } }
       await seguro(async () => { await db.inserir(cfg.tabela, linha); await carregar(); aviso('Salvo.'); });
     });
     const itens = dados[cfg.tabela] || [];
     return h('div', { class: 'card' },
       h('h2', {}, cfg.titulo), h('p', { class: 'nota' }, cfg.ajuda),
+      cfg.tabela === 'contas' && itens.some((x) => x.moeda && x.moeda !== 'BRL') ? h('button', { type: 'button', class: 'sec', onclick: atualizarCotacoes }, 'Atualizar cotação (dólar e bitcoin)') : null,
       h('ul', { class: 'lista' }, itens.length ? itens.map((x) => {
         const [txt, val] = cfg.linha(x);
         const acoes = [h('button', { type: 'button', class: 'mini', 'aria-label': 'Apagar', onclick: () => apagar(cfg.tabela, x.id) }, '✕')];
@@ -298,12 +304,52 @@ function renderCadastros() {
   }));
 }
 
+// Valida e completa uma conta antes de gravar. Devolve a mensagem de erro, ou nada.
+function normalizarConta(x) {
+  if (!c.MOEDAS.includes(x.moeda)) return 'Moeda inválida.';
+  if (x.moeda === 'BRL') {
+    if (!(x.saldo != null && isFinite(x.saldo) && x.saldo >= -9999999 && x.saldo <= 99999999)) return 'Informe o saldo em R$.';
+    delete x.moeda; delete x.quantidade; delete x.cotacao; delete x.cotacao_em; // padrão do banco (BRL); funciona mesmo sem a 002
+  } else {
+    if (!(x.quantidade >= 0 && x.quantidade < 1e9)) return 'Informe a quantidade.';
+    if (!(x.cotacao > 0 && x.cotacao < 1e8)) return 'Informe a cotação em R$.';
+    Object.assign(x, { tipo: 'investimento', saldo: c.saldoEmReais(x.quantidade, x.cotacao), cotacao_em: x.cotacao_em || c.hojeISO() });
+  }
+  if (!(x.saldo >= -9999999 && x.saldo <= 99999999)) return 'Saldo fora da faixa.';
+  x.atualizado_em = c.hojeISO();
+}
+
+const numBR = (v) => Number(String(v).trim().replace(/\./g, '').replace(',', '.'));
 async function editarSaldo(conta) {
-  const v = prompt(`Novo saldo de ${conta.nome} (R$):`, String(conta.saldo));
+  const estrangeira = conta.moeda && conta.moeda !== 'BRL';
+  const v = prompt(estrangeira ? `Cotação de 1 ${conta.moeda} em R$ (${conta.nome}):` : `Novo saldo de ${conta.nome} (R$):`, String(estrangeira ? conta.cotacao : conta.saldo).replace('.', ','));
   if (v == null) return;
-  const n = Number(String(v).replace(/\./g, '').replace(',', '.'));
-  if (!isFinite(n)) { aviso('Valor inválido.', 'atencao'); return; }
-  await seguro(async () => { await db.atualizar('contas', conta.id, { saldo: n, atualizado_em: c.hojeISO() }); await carregar(); aviso('Saldo atualizado.'); });
+  const n = numBR(v);
+  const campos = estrangeira ? { cotacao: n, cotacao_em: null } : { moeda: 'BRL', saldo: n };
+  const erro = normalizarConta({ ...conta, ...campos });
+  if (erro || !isFinite(n)) { aviso(erro || 'Valor inválido.', 'atencao'); return; }
+  const x = { ...conta, ...campos }; normalizarConta(x);
+  await seguro(async () => { await db.atualizar('contas', conta.id, { saldo: x.saldo, cotacao: x.cotacao, cotacao_em: x.cotacao_em, atualizado_em: x.atualizado_em }); await carregar(); aviso('Saldo atualizado.'); });
+}
+
+// Cotação automática (opcional): uma única API pública, sem chave e sem dado do usuário na requisição.
+// Se falhar, a cotação manual (botão "saldo") continua funcionando.
+const URL_COTACAO = 'https://economia.awesomeapi.com.br/json/last/USD-BRL,BTC-BRL';
+async function atualizarCotacoes() {
+  const alvo = dados.contas.filter((x) => x.moeda && x.moeda !== 'BRL');
+  if (!alvo.length) { aviso('Nenhuma conta em dólar ou bitcoin.', 'atencao'); return; }
+  let cot;
+  try {
+    const r = await fetch(URL_COTACAO, { credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store' });
+    cot = c.cotacoesDaApi(r.ok ? await r.json() : null);
+  } catch { cot = {}; }
+  if (!alvo.some((x) => cot[x.moeda])) { aviso('Não consegui buscar a cotação. Informe manualmente no botão "saldo".', 'atencao'); return; }
+  await seguro(async () => {
+    for (const x of alvo) if (cot[x.moeda]) {
+      await db.atualizar('contas', x.id, { cotacao: cot[x.moeda], cotacao_em: c.hojeISO(), saldo: c.saldoEmReais(x.quantidade, cot[x.moeda]), atualizado_em: c.hojeISO() });
+    }
+    await carregar(); aviso('Cotações atualizadas.');
+  });
 }
 
 function preencherConfig() {

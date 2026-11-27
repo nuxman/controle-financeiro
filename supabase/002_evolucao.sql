@@ -46,3 +46,20 @@ begin
     execute format('create trigger trava_dono before update on public.%I for each row execute function public.bloquear_troca_dono()', t);
   end loop;
 end $$;
+
+-- ---------- Contas em outra moeda (Etapa 3) ----------
+-- `saldo` continua sendo o valor em R$ (= quantidade × cotação, calculado no app), para o resto do app não mudar.
+-- Só a QUANTIDADE é guardada: nunca seed phrase, chave privada, PIN ou endereço de carteira.
+alter table public.contas add column if not exists moeda      text not null default 'BRL';
+alter table public.contas add column if not exists quantidade numeric(24,8);
+alter table public.contas add column if not exists cotacao    numeric(18,6);
+alter table public.contas add column if not exists cotacao_em date;
+alter table public.contas drop constraint if exists contas_moeda_check;
+alter table public.contas add constraint contas_moeda_check check (moeda in ('BRL', 'USD', 'BTC'));
+alter table public.contas drop constraint if exists contas_quantidade_check;
+alter table public.contas add constraint contas_quantidade_check check (quantidade is null or quantidade between 0 and 1000000000);
+alter table public.contas drop constraint if exists contas_cotacao_check;
+alter table public.contas add constraint contas_cotacao_check check (cotacao is null or (cotacao > 0 and cotacao < 100000000));
+-- Moeda estrangeira = investimento, com quantidade e cotação (nunca entra no saldo inicial nem no disponível).
+alter table public.contas drop constraint if exists contas_estrangeira_check;
+alter table public.contas add constraint contas_estrangeira_check check (moeda = 'BRL' or (tipo = 'investimento' and quantidade is not null and cotacao is not null));

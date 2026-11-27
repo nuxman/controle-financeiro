@@ -108,3 +108,11 @@ test('parse rápido', () => {
   assert.ok(c.parseRapido('0 nada').erro);
   assert.equal(c.parseRapido('30 <img src=x onerror=alert(1)>').descricao.includes('<img'), true); // texto é guardado como texto; a UI nunca usa innerHTML
 });
+
+test('moeda estrangeira: saldo = quantidade × cotação; API validada', () => {
+  assert.equal(c.saldoEmReais(0.01234567, 500000), 6172.84);
+  assert.equal(c.saldoEmReais(100, 5.4321), 543.21);
+  assert.deepEqual(c.cotacoesDaApi({ USDBRL: { bid: '5.43' }, BTCBRL: { bid: '512345.6' } }), { USD: 5.43, BTC: 512345.6 });
+  assert.deepEqual(c.cotacoesDaApi({ USDBRL: { bid: 'x' }, BTCBRL: { bid: '-1' } }), {});
+  assert.deepEqual(c.cotacoesDaApi(null), {});
+});

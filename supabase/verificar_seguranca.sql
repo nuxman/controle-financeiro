@@ -15,3 +15,10 @@ order by 1;
 -- A migração 002 foi aplicada? (deve listar 4 linhas)
 select table_name, column_name from information_schema.columns
 where table_schema = 'public' and column_name = 'importacao_id' order by 1;
+
+-- Contas em moeda estrangeira (002): as 4 colunas e as regras devem existir.
+select
+  (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'contas'
+     and column_name in ('moeda', 'quantidade', 'cotacao', 'cotacao_em')) as colunas_moeda_esperado_4,
+  (select count(*) from pg_constraint where conrelid = 'public.contas'::regclass
+     and conname in ('contas_moeda_check', 'contas_quantidade_check', 'contas_cotacao_check', 'contas_estrangeira_check')) as regras_moeda_esperado_4;
