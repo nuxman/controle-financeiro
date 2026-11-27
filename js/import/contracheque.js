@@ -3,7 +3,7 @@
 // Cabeçalho pessoal (nome, CPF, matrícula, PIS, banco, agência, conta) e tudo depois de
 // "Dependentes I.R." (memória de cálculo, com dependentes do plano de saúde) são descartados.
 import { normal, valorBR, r2, soma, dataValida, mesPorExtenso, RE_VALOR } from './texto.js';
-import { addMeses } from '../calc.js';
+import { addMeses, receitasMes } from '../calc.js';
 
 export const TOLERANCIA = 0.05;
 
@@ -151,25 +151,45 @@ export const DESC_SALARIO = 'Salário (líquido)';
 const brl2 = (v) => v.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 export const descFimConsignado = (c) => `Fim de consignado R$ ${brl2(c.valor)} (${c.ultimoMes.slice(5)}/${c.ultimoMes.slice(0, 4)})`;
 
+// Salário = receita recorrente cuja descrição começa com "salário" (sem diferenciar maiúsculas/acentos),
+// ainda ativa em `mes` ou depois.
+export const salariosAtivos = (receitas, mes) => (receitas || []).filter((r) => r.recorrente && /^SALARIO/.test(normal(r.descricao).trim()) && !(r.fim && r.fim.slice(0, 7) < mes));
+
 export function planoContracheque(cc, a, d) {
   const prox = addMeses(cc.competencia, 1);
+  const receitas = d.receitas || [];
+  // Pontual já cadastrada (mesma descrição e mês): não cria de novo, mesmo que o PDF tenha outro hash.
+  const jaTem = (n) => receitas.some((r) => !r.recorrente && r.descricao === n.descricao && r.mes && r.mes.slice(0, 7) === n.mes.slice(0, 7));
   const itens = [];
   if (a.normal) {
-    const atual = (d.receitas || []).find((r) => r.recorrente && r.descricao === DESC_SALARIO && !(r.fim && r.fim.slice(0, 7) < prox));
+    const [atual, ...outros] = salariosAtivos(receitas, prox);
     const novo = { descricao: DESC_SALARIO, valor: a.liquidoRecorrente, recorrente: true, inicio: prox + '-01', fim: null };
     // Se a receita atual já começa em `prox` ou depois, só troca o valor; senão, encerra a atual e cria uma nova.
-    if (atual && atual.inicio && atual.inicio.slice(0, 7) >= prox) itens.push({ id: 'salario', marcado: true, atualizar: { id: atual.id, campos: { valor: novo.valor } } });
-    else itens.push({ id: 'salario', marcado: true, encerrar: atual ? { id: atual.id, campos: { fim: cc.competencia + '-01' } } : null, criar: novo, valorAnterior: atual ? Number(atual.valor) : null });
+    if (atual && atual.inicio && atual.inicio.slice(0, 7) >= prox) itens.push({ id: 'salario', marcado: true, atual, atualizar: { id: atual.id, campos: { valor: novo.valor } } });
+    else itens.push({ id: 'salario', marcado: true, atual, encerrar: atual ? { id: atual.id, campos: { fim: cc.competencia + '-01' } } : null, criar: novo, valorAnterior: atual ? Number(atual.valor) : null });
+    // Mais de um salário ativo: propõe encerrar os outros (senão a renda soma em dobro).
+    for (const [i, o] of outros.entries()) itens.push({ id: 'outroSalario' + i, marcado: true, atual: o, encerrar: { id: o.id, campos: { fim: cc.competencia + '-01' } } });
   } else {
-    itens.push({ id: 'folha', marcado: true, criar: { descricao: `${cc.folha.slice(0, 40)} ${cc.competencia.slice(5)}/${cc.competencia.slice(0, 4)}`.slice(0, 80), valor: cc.totais.liquido, recorrente: false, mes: a.mesCredito + '-01' } });
+    const n = { descricao: `${cc.folha.slice(0, 40)} ${cc.competencia.slice(5)}/${cc.competencia.slice(0, 4)}`.slice(0, 80), valor: cc.totais.liquido, recorrente: false, mes: a.mesCredito + '-01' };
+    if (!jaTem(n)) itens.push({ id: 'folha', marcado: true, criar: n });
   }
   if (a.normal) for (const [i, e] of a.extras.entries()) {
-    if (e.liquidoEstimado > 0) itens.push({ id: 'extra' + i, marcado: true, criar: { descricao: e.descricao.slice(0, 80), valor: e.liquidoEstimado, recorrente: false, mes: e.mes + '-01' } });
+    const n = { descricao: e.descricao.slice(0, 80), valor: e.liquidoEstimado, recorrente: false, mes: e.mes + '-01' };
+    if (e.liquidoEstimado > 0 && !jaTem(n)) itens.push({ id: 'extra' + i, marcado: true, criar: n });
   }
   for (const [i, c] of a.consignados.entries()) {
     const descricao = descFimConsignado(c);
-    const ja = (d.receitas || []).some((r) => r.descricao === descricao);
+    const ja = receitas.some((r) => r.descricao === descricao);
     if (!ja && c.faltam >= 0) itens.push({ id: 'consig' + i, marcado: true, criar: { descricao, valor: c.valor, recorrente: true, inicio: addMeses(c.ultimoMes, 1) + '-01', fim: null } });
   }
   return itens;
+}
+
+// Renda total de `mes` antes e depois de gravar os itens marcados (para enxergar soma em dobro).
+export function rendaAntesDepois(receitas, itens, mes) {
+  const marcados = itens.filter((i) => i.marcado);
+  const muda = new Map();
+  for (const i of marcados) for (const x of [i.encerrar, i.atualizar]) if (x) muda.set(x.id, { ...muda.get(x.id), ...x.campos });
+  const depois = receitas.map((r) => (muda.has(r.id) ? { ...r, ...muda.get(r.id) } : r)).concat(marcados.filter((i) => i.criar).map((i) => i.criar));
+  return { mes, antes: receitasMes(receitas, mes), depois: receitasMes(depois, mes) };
 }

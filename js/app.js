@@ -4,7 +4,8 @@ import * as c from './calc.js';
 import { lerPdf } from './import/pdf.js';
 import { textoDe, sha256, detectarTipo } from './import/texto.js';
 import { lerFaturaBradesco, lerFaturaNubank, planoFatura } from './import/faturas.js';
-import { lerContracheque, analisar, planoContracheque } from './import/contracheque.js';
+import { lerContracheque, analisar, planoContracheque, rendaAntesDepois } from './import/contracheque.js';
+import * as g from './import/gravar.js';
 
 // Impede que a página seja exibida dentro de outro site (clickjacking).
 if (window.top !== window.self) { document.body.textContent = ''; throw new Error('frame'); }
@@ -402,10 +403,12 @@ fi.arquivo.addEventListener('change', () => { $('#campo-senha').hidden = true; f
 fi.addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const arquivo = fi.arquivo.files[0];
-  if (!arquivo) return;
+  const btn = fi.querySelector('button');
+  if (!arquivo || btn.disabled) return;
+  if (g.emGravacao()) { aviso('Aguarde a gravação terminar.', 'atencao'); return; }
   const senha = fi.senha.value;
   fi.senha.value = ''; // a senha só vive nesta chamada
-  const btn = fi.querySelector('button'); btn.disabled = true;
+  btn.disabled = true;
   $('#revisao').replaceChildren(h('p', { class: 'nota' }, 'Lendo o PDF…'));
   try {
     if (semMigracao) throw new Error('Rode supabase/002_evolucao.sql no SQL Editor antes de importar.');
@@ -440,17 +443,15 @@ function concluido(msg) {
   fi.reset(); aviso(msg);
 }
 
-// Grava a linha em `importacoes` e roda `criar(imp.id)`. Se `criar` falhar, apagar a importação desfaz
-// (on delete cascade) as linhas que ela já criou. Depois roda `ajustar()` (atualiza/apaga linhas antigas).
-async function gravarImportacao(registro, criar, ajustar) {
-  return seguro(async () => {
-    const [imp] = await db.inserir('importacoes', registro);
-    try { await criar(imp.id); } catch (e) { await db.apagar('importacoes', imp.id).catch(() => {}); throw e; }
-    await ajustar();
-    await carregar();
-    return true;
-  });
+// Grava pelo módulo gravar.js (trava + hash conferido no servidor antes de inserir). O botão "Ler PDF"
+// fica desabilitado durante a gravação, para não abrir outra revisão no meio.
+async function gravar(fn) {
+  const lerBtn = fi.querySelector('button');
+  lerBtn.disabled = true;
+  try { return await seguro(async () => { await fn(); await carregar(); return true; }); }
+  finally { lerBtn.disabled = false; }
 }
+const gravarImportacao = (registro, criar, ajustar) => gravar(() => g.gravarImportacao(db, registro, criar, ajustar));
 
 const ACAO = { lancamento: 'Gasto no dia da compra', parcela: 'Vira parcela', na_fatura: 'Entra no compromisso da fatura (compra antes do início)', credito: 'Crédito/estorno: não é gravado', ignorar: 'Ignorada (fatura antes do início do controle)' };
 
@@ -550,15 +551,23 @@ function revisarContracheque(cc, hash) {
     if (i.id === 'salario') {
       const v = i.atualizar ? i.atualizar.campos.valor : i.criar.valor;
       return `Receita recorrente "Salário (líquido)": ${c.brl(v)} a partir de ${c.nomeMes(c.addMeses(cc.competencia, 1))}` +
-        (i.atualizar ? ' (troca o valor da já cadastrada)' : i.encerrar ? ` (a atual, de ${c.brl(i.valorAnterior)}, termina em ${c.nomeMes(cc.competencia)})` : '');
+        (i.atualizar ? ` (troca o valor de "${i.atual.descricao}")` : i.encerrar ? ` (a atual, "${i.atual.descricao}" de ${c.brl(i.valorAnterior)}, termina em ${c.nomeMes(cc.competencia)})` : '');
     }
+    if (i.id.startsWith('outroSalario')) return `Encerrar outro salário cadastrado "${i.atual.descricao}" de ${c.brl(Number(i.atual.valor))} em ${c.nomeMes(cc.competencia)} (senão a renda soma em dobro)`;
     if (i.id === 'folha') return `Receita pontual "${i.criar.descricao}": ${c.brl(i.criar.valor)} em ${c.nomeMes(c.mesDe(i.criar.mes))}`;
     if (i.id.startsWith('extra')) return `Receita pontual "${i.criar.descricao}": ${c.brl(i.criar.valor)} (líquido estimado) em ${c.nomeMes(c.mesDe(i.criar.mes))}`;
     return `Receita recorrente "${i.criar.descricao}": +${c.brl(i.criar.valor)} a partir de ${c.nomeMes(c.mesDe(i.criar.inicio))} (o desconto deixa de existir)`;
   };
+  const renda = h('p', { class: 'formula' });
+  const mostrarRenda = () => {
+    const r = rendaAntesDepois(dados.receitas, itens, c.addMeses(cc.competencia, 1));
+    renda.textContent = `Renda total de ${c.nomeMes(r.mes)}: antes ${c.brl(r.antes)} → depois ${c.brl(r.depois)}`;
+    renda.className = 'formula' + (r.depois > r.antes * 1.3 && r.antes > 0 ? ' alerta' : '');
+  };
+  mostrarRenda();
   const caixas = itens.map((i) => {
     const cb = h('input', { type: 'checkbox', checked: true });
-    cb.addEventListener('change', () => { i.marcado = cb.checked; });
+    cb.addEventListener('change', () => { i.marcado = cb.checked; mostrarRenda(); });
     return h('label', { class: 'check' }, cb, rotulo(i));
   });
 
@@ -578,23 +587,10 @@ function revisarContracheque(cc, hash) {
     else btn.disabled = false;
   });
   $('#revisao').replaceChildren(h('div', { class: 'card revisao' }, h('h2', {}, 'Revisar antes de gravar'), resumo, tabela, info,
-    h('p', { class: 'nota' }, 'O que será gravado (desmarque o que não quiser):'), caixas, btn));
+    h('p', { class: 'nota' }, 'O que será gravado (desmarque o que não quiser):'), caixas, renda, btn));
 }
 
-function gravarContracheque(cc, itens, hash) {
-  const marcados = itens.filter((i) => i.marcado);
-  return gravarImportacao({ hash, tipo: 'contracheque', competencia: cc.competencia + '-01', total: cc.totais.liquido,
-    total_bruto: cc.totais.bruto, total_descontos: cc.totais.descontos, liquido: cc.totais.liquido }, async (id) => {
-    const novas = marcados.filter((i) => i.criar).map((i) => ({ ...i.criar, importacao_id: id }));
-    if (novas.some((n) => !(n.valor > 0 && n.valor < 10000000))) throw new Error('Valor inválido.');
-    if (novas.length) await db.inserir('receitas', novas);
-  }, async () => {
-    for (const i of marcados) {
-      if (i.encerrar) await db.atualizar('receitas', i.encerrar.id, i.encerrar.campos);
-      if (i.atualizar) await db.atualizar('receitas', i.atualizar.id, i.atualizar.campos);
-    }
-  });
-}
+const gravarContracheque = (cc, itens, hash) => gravar(() => g.gravarContracheque(db, cc, itens, hash));
 
 // ---------------- Início ----------------
 if (db.logado) mostrarApp(); else mostrarLogin();
