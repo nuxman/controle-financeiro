@@ -2,7 +2,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { criarHandler, assinar, doUsuario, iguais, AJUDA, NAO_ENTENDI, LIMITE_HORA } from '../supabase/functions/whatsapp/bot.js';
+import { criarHandler, assinar, doUsuario, iguais, AJUDA, NAO_ENTENDI, LIMITE_HORA, restSupabase, chaveDoSupabase } from '../supabase/functions/whatsapp/bot.js';
+import { resumoMes } from '../js/calc.js';
 
 const SEGREDO = 'segredo-de-teste';
 const VERIFY = 'verify-de-teste';
@@ -10,7 +11,8 @@ const EU = '5569900000001', OUTRO = '5569900000002', ESTRANHO = '5569900000009';
 const U1 = '11111111-1111-1111-1111-111111111111', U2 = '22222222-2222-2222-2222-222222222222';
 const AGORA = new Date('2026-11-27T15:00:00Z'); // 11h em Manaus
 
-// ---------- PostgREST falso em memória (entende eq/gte/lte, order, limit, on_conflict) ----------
+// ---------- PostgREST falso em memória (entende eq/gte/lte, order, limit, on_conflict, max_rows) ----------
+const MAX_ROWS = 1000;
 function bancoFalso() {
   const t = {
     whatsapp_vinculos: [{ telefone_e164: '+' + EU, user_id: U1 }, { telefone_e164: '+' + OUTRO, user_id: U2 }],
@@ -33,10 +35,15 @@ function bancoFalso() {
   const rest = async (metodo, tabela, q = '', corpo, prefer = '') => {
     chamadas.push({ metodo, tabela, q, corpo });
     const { fs, opts } = filtros(q);
+    if (tabela === 'rpc/gastos_por_mes') { // igual à função SQL: filtra por p_user e agrega por mês
+      const por = {};
+      for (const l of t.lancamentos) if (l.user_id === corpo.p_user && l.data >= corpo.p_desde) por[l.data.slice(0, 7) + '-01'] = (por[l.data.slice(0, 7) + '-01'] || 0) + Number(l.valor);
+      return Object.entries(por).sort().map(([mes, total]) => ({ mes, total: String(total) }));
+    }
     if (metodo === 'GET') {
       let r = t[tabela].filter((x) => passa(x, fs)).map((x) => ({ ...x }));
       if (opts.order) r.sort((a, b) => (a[opts.order[0]] < b[opts.order[0]] ? -1 : 1) * (opts.order[1] === 'desc' ? -1 : 1));
-      return opts.limit ? r.slice(0, opts.limit) : r;
+      return r.slice(0, Math.min(opts.limit || MAX_ROWS, MAX_ROWS)); // o PostgREST corta em max_rows (1000)
     }
     if (metodo === 'POST') {
       if (opts.on_conflict && t[tabela].some((x) => x[opts.on_conflict] === corpo[opts.on_conflict])) return prefer.includes('ignore') ? [] : Promise.reject(new Error('409'));
@@ -320,7 +327,8 @@ test('toda chamada ao banco, exceto a busca do vínculo, filtra ou grava com o u
   for (const t of ['45 mercado', '600 tênis 3x', 'hoje', 'semana', 'desfazer', 'ajuda']) await s.msg(t);
   for (const c of s.banco.chamadas) {
     if (c.tabela === 'whatsapp_vinculos') continue;
-    const ok = c.metodo === 'POST' ? c.corpo.user_id === U1 : new URLSearchParams(c.q).get('user_id') === 'eq.' + U1;
+    const ok = c.tabela.startsWith('rpc/') ? c.corpo.p_user === U1
+      : c.metodo === 'POST' ? c.corpo.user_id === U1 : new URLSearchParams(c.q).get('user_id') === 'eq.' + U1;
     assert.ok(ok, `${c.metodo} ${c.tabela} ${c.q}`);
   }
 });
@@ -336,4 +344,83 @@ test('logs não têm o texto da mensagem nem o telefone completo', async () => {
   assert.doesNotMatch(tudo, /secreto|mercadinho/);
   for (const n of [EU, ESTRANHO]) assert.ok(!tudo.includes(n.slice(0, -4)));
   assert.match(tudo, /"fim":"0001"/);
+});
+
+// ---------- Chave do Supabase: sb_secret_ (nova) e JWT (legada) ----------
+const capturar = () => {
+  const reqs = [];
+  return { reqs, fetchFn: async (url, init) => { reqs.push({ url, headers: init.headers }); return new Response('[]', { status: 200 }); } };
+};
+
+test('chave nova sb_secret_: só no apikey, sem Authorization', async () => {
+  const { reqs, fetchFn } = capturar();
+  await restSupabase('https://x.supabase.co', 'sb_secret_TESTE', fetchFn)('GET', 'config', 'select=*');
+  assert.equal(reqs[0].headers.apikey, 'sb_secret_TESTE');
+  assert.equal('Authorization' in reqs[0].headers, false);
+});
+
+test('chave legada JWT: apikey e Authorization: Bearer', async () => {
+  const { reqs, fetchFn } = capturar();
+  await restSupabase('https://x.supabase.co', 'eyJ.teste.jwt', fetchFn)('GET', 'config', 'select=*');
+  assert.equal(reqs[0].headers.apikey, 'eyJ.teste.jwt');
+  assert.equal(reqs[0].headers.Authorization, 'Bearer eyJ.teste.jwt');
+});
+
+test('chave vazia ou publishable: recusa antes de chamar o banco', () => {
+  for (const k of ['', 'sb_publishable_TESTE', 'qualquer']) assert.throws(() => restSupabase('https://x', k, () => assert.fail()));
+});
+
+test('chaveDoSupabase: prefere SUPABASE_SECRET_KEYS (default), senão a service role legada', () => {
+  assert.equal(chaveDoSupabase('{"default":"sb_secret_A","outra":"sb_secret_B"}', 'eyJ.x'), 'sb_secret_A');
+  assert.equal(chaveDoSupabase('{"bot":"sb_secret_B"}', 'eyJ.x'), 'sb_secret_B');
+  assert.equal(chaveDoSupabase(undefined, 'eyJ.x'), 'eyJ.x');
+  assert.equal(chaveDoSupabase('{quebrado', 'eyJ.x'), 'eyJ.x');
+  assert.equal(chaveDoSupabase('{}', undefined), '');
+});
+
+test('o fluxo completo funciona com as duas formas de chave (fetch falso que exige o header certo)', async () => {
+  for (const chave of ['sb_secret_TESTE', 'eyJ.teste.jwt']) {
+    const b = bancoFalso();
+    const memoria = b.rest;
+    const fetchFn = async (url, init) => {
+      // Gateway falso: sb_secret_ com Bearer é recusado, como no Supabase.
+      const h = init.headers;
+      if (h.apikey !== chave || (chave.startsWith('sb_') ? 'Authorization' in h : h.Authorization !== 'Bearer ' + chave)) return new Response('', { status: 401 });
+      const u = new URL(url), tabela = u.pathname.replace('/rest/v1/', '');
+      const r = await memoria(init.method, tabela, u.search.slice(1), init.body && JSON.parse(init.body), h.Prefer);
+      return new Response(JSON.stringify(r ?? null), { status: 200 });
+    };
+    b.rest = restSupabase('https://x.supabase.co', chave, fetchFn);
+    const s = montar(b);
+    await s.msg('45 mercado');
+    assert.equal(s.banco.t.lancamentos.length, 1, chave);
+    assert.match(s.ultima(), /^✓ R\$\s45,00/, chave);
+  }
+});
+
+// ---------- 2500 lançamentos: o bot não esbarra no limite de 1000 linhas ----------
+test('2500 lançamentos: "hoje" e a confirmação batem com o cálculo sobre todas as linhas', async () => {
+  const b = bancoFalso();
+  b.t.config[0].mes_inicio = '2026-01-01';
+  b.t.config[0].saldo_inicial = 100000;
+  b.t.receitas.push({ user_id: U1, descricao: 'Salário', valor: 20000, recorrente: true, inicio: '2026-01-01', fim: null });
+  for (let i = 0; i < 2500; i++) {
+    const data = `2026-${String(1 + (i % 11)).padStart(2, '0')}-${String(1 + (i % 27)).padStart(2, '0')}`;
+    b.t.lancamentos.push({ id: 'l' + i, user_id: U1, data, valor: 10 + (i % 7), categoria: 'Mercado', origem: 'app' });
+  }
+  b.t.lancamentos.push({ id: 'u2', user_id: U2, data: '2026-11-27', valor: 99999, categoria: 'Outros' }); // de outra pessoa
+  const esperado = () => resumoMes({ contas: [], receitas: b.t.receitas, compromissos: [], parcelas: [], config: b.t.config[0], lancamentos: b.t.lancamentos.filter((l) => l.user_id === U1) }, '2026-11-27');
+  const s = montar(b);
+  await s.msg('hoje');
+  const r = esperado();
+  assert.ok(r.gastosHoje > 0);
+  const brl = (v) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  assert.equal(s.ultima(), `Hoje você gastou ${brl(r.gastosHoje)}.
+Disponível hoje: ${brl(Math.max(0, r.restanteHoje))} (limite do dia ${brl(r.limiteDia)}).
+Até o fim do mês: ${brl(r.disponivel)}.`);
+  await s.msg('45 mercado');
+  const r2 = esperado();
+  assert.ok(s.ultima().endsWith(`Disponível hoje: ${brl(Math.max(0, r2.restanteHoje))} (limite do dia ${brl(r2.limiteDia)}).`));
+  // nenhuma leitura de lançamentos chegou perto do corte de 1000 linhas
+  assert.ok(!b.chamadas.some((c) => c.tabela === 'lancamentos' && c.metodo === 'GET' && !/data=eq\./.test(c.q) && !/limit=1/.test(c.q) && !/data=gte\.2026-11-21/.test(c.q)));
 });

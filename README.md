@@ -121,6 +121,7 @@ Usa só a **API oficial da Meta** (WhatsApp Business Cloud API), recebida por um
 - A Meta reenvia mensagens: o `wamid` de cada uma é gravado em `whatsapp_mensagens` (único), e a repetida não grava nada.
 - No máximo 30 mensagens por hora por número; acima disso, avisa uma vez e ignora.
 - Logs só com o tipo do evento e os 4 últimos dígitos do telefone: nunca o texto da mensagem.
+- Para o resumo, o bot não lê lançamento por lançamento (o PostgREST devolve no máximo 1000 linhas): soma por mês no banco com `gastos_por_mes(p_user, p_desde)` (`security invoker`, só `service_role` executa) e lê só as linhas do dia.
 - Os lançamentos ganham `origem = 'whatsapp'` e o `wamid`. Na importação de fatura, um lançamento parecido que veio do WhatsApp aparece como "(via WhatsApp)".
 
 `supabase/functions/_shared/calc.js` é **cópia** de `js/calc.js` (o deploy só empacota o que está em `supabase/functions`). Depois de mexer em `js/calc.js`, rode `npm run copiar-calc`; o teste falha se as duas estiverem diferentes.
@@ -154,7 +155,16 @@ Invente um verify token longo e aleatório (ex.: saída de `openssl rand -hex 32
 supabase secrets set WHATSAPP_TOKEN=EAA... WHATSAPP_APP_SECRET=... WHATSAPP_VERIFY_TOKEN=... WHATSAPP_PHONE_NUMBER_ID=... GRAPH_API_VERSION=v23.0
 supabase functions deploy whatsapp --no-verify-jwt
 ```
-`GRAPH_API_VERSION`: use a versão mostrada nos exemplos de **Configuração da API** (formato `vNN.0`). `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` já existem na função: não defina.
+`GRAPH_API_VERSION`: use a versão mostrada nos exemplos de **Configuração da API** (formato `vNN.0`).
+
+**Qual chave do Supabase vai onde**
+| Chave | Onde fica | Observação |
+|---|---|---|
+| `sb_publishable_…` (ou `anon` legada) | `js/config.js` (navegador) | Pública. O bot **recusa** essa chave. |
+| `sb_secret_…` (nova) | Nenhum segredo a definir: o Supabase injeta em `SUPABASE_SECRET_KEYS` | O bot usa a chave chamada `default` (ou a primeira) e manda **só** no cabeçalho `apikey`. |
+| `service_role` JWT (legada, `eyJ…`) | Nenhum segredo a definir: o Supabase injeta em `SUPABASE_SERVICE_ROLE_KEY` | Usada só se não houver chave nova; vai em `apikey` e `Authorization: Bearer`. |
+
+`SUPABASE_URL`, `SUPABASE_SECRET_KEYS` e `SUPABASE_SERVICE_ROLE_KEY` já existem na função: **não** coloque nenhuma delas em `supabase secrets set` nem em arquivo. Se quiser uma chave secreta só para o bot (para poder revogá-la sem afetar o resto), crie em **Project Settings → API Keys → Secret keys** e apague a `default` antiga só depois de conferir que o bot respondeu.
 A URL da função fica `https://SEU-PROJECT-REF.supabase.co/functions/v1/whatsapp`.
 
 **5. Webhook**

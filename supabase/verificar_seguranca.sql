@@ -35,3 +35,10 @@ where n.nspname = 'public' and c.relname in ('whatsapp_vinculos', 'whatsapp_mens
 -- Colunas origem e wamid em lancamentos e parcelas (deve listar 4 linhas).
 select table_name, column_name from information_schema.columns
 where table_schema = 'public' and table_name in ('lancamentos', 'parcelas') and column_name in ('origem', 'wamid') order by 1, 2;
+
+-- gastos_por_mes (003): só service_role executa; security invoker (prosecdef = false).
+select p.prosecdef as security_definer_esperado_false,
+       has_function_privilege('anon', p.oid, 'execute') as anon_esperado_false,
+       has_function_privilege('authenticated', p.oid, 'execute') as authenticated_esperado_false,
+       has_function_privilege('service_role', p.oid, 'execute') as service_role_esperado_true
+from pg_proc p where p.oid = 'public.gastos_por_mes(uuid, date)'::regprocedure;

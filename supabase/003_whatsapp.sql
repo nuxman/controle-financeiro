@@ -71,3 +71,19 @@ begin
     execute format('create trigger origem_importacao before insert on public.%I for each row execute function public.origem_importacao()', t);
   end loop;
 end $$;
+
+-- ---------- Total gasto por mês (para o bot não ler lançamento por lançamento) ----------
+-- security invoker: roda com o papel de quem chama. O bot chama com a chave secreta e passa SEMPRE o user_id do vínculo.
+-- Só o service_role pode executar (anon e authenticated não), e a consulta filtra por p_user.
+create or replace function public.gastos_por_mes(p_user uuid, p_desde date)
+returns table (mes date, total numeric)
+language sql stable security invoker set search_path = ''
+as $$
+  select date_trunc('month', l.data)::date as mes, sum(l.valor) as total
+  from public.lancamentos l
+  where l.user_id = p_user and l.data >= p_desde
+  group by 1
+  order by 1
+$$;
+revoke all on function public.gastos_por_mes(uuid, date) from public, anon, authenticated;
+grant execute on function public.gastos_por_mes(uuid, date) to service_role;

@@ -1,14 +1,14 @@
 // Bot de WhatsApp (WhatsApp Business Cloud API, oficial da Meta). JavaScript puro para rodar igual no
 // Deno (Edge Function, via index.ts) e no Node (testes em tests/whatsapp.test.mjs).
 // A lógica de parse e de cálculo é a do app: ../_shared/calc.js é cópia de js/calc.js (npm run copiar-calc).
-import { parseRapido, resumoMes, brl, mesDe, addMeses } from '../_shared/calc.js';
+import { parseRapido, resumoMes, brl, mesDe, hojeEfetivo } from '../_shared/calc.js';
 
 export const FUSO = 'America/Manaus';
 export const LIMITE_HORA = 30;
 const DESFAZER_MS = 15 * 60 * 1000;
 const MAX_CORPO = 256 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const TABELAS = new Set(['contas', 'receitas', 'compromissos', 'parcelas', 'lancamentos', 'config', 'whatsapp_vinculos', 'whatsapp_mensagens']);
+const TABELAS = new Set(['contas', 'receitas', 'compromissos', 'parcelas', 'lancamentos', 'config', 'whatsapp_vinculos', 'whatsapp_mensagens', 'rpc/gastos_por_mes']);
 const MEIOS = { debito: 'débito', credito: 'crédito', pix: 'pix', dinheiro: 'dinheiro' };
 export const NAO_ENTENDI = 'Não entendi. Ex.: 45 mercado pix';
 export const AJUDA = [
@@ -45,13 +45,32 @@ export async function assinaturaValida(segredo, corpo, cabecalho) {
 // Logs: nunca o texto da mensagem nem o telefone completo.
 export const fim4 = (tel) => String(tel || '').slice(-4);
 
-// ---------------- Banco (service role: ignora o RLS) ----------------
+// ---------------- Banco (chave secreta: ignora o RLS) ----------------
+// Chave que o Supabase injeta na função. Nova: SUPABASE_SECRET_KEYS = {"default":"sb_secret_..."} (usa "default",
+// ou a primeira). Legada: SUPABASE_SERVICE_ROLE_KEY (JWT). Nenhuma das duas é definida à mão.
+export function chaveDoSupabase(secretKeysJson, serviceRoleKey) {
+  try {
+    const ks = JSON.parse(secretKeysJson || '{}');
+    const k = ks.default || Object.values(ks)[0];
+    if (k) return k;
+  } catch { /* cai na legada */ }
+  return serviceRoleKey || '';
+}
+
+// sb_secret_ não é JWT: vai só no apikey (com Authorization: Bearer o gateway recusa). JWT legado: apikey + Bearer.
+export function cabecalhosSupabase(chave) {
+  if (/^sb_secret_/.test(chave)) return { apikey: chave };
+  if (/^eyJ/.test(chave)) return { apikey: chave, Authorization: `Bearer ${chave}` };
+  throw new Error('chave do Supabase ausente ou não é secreta'); // publishable/anon não serve: o RLS bloquearia tudo
+}
+
 export function restSupabase(url, chave, fetchFn = fetch) {
+  const auth = cabecalhosSupabase(chave);
   return async (metodo, tabela, consulta = '', corpo, prefer = 'return=representation') => {
     if (!TABELAS.has(tabela)) throw new Error('tabela não permitida');
     const r = await fetchFn(`${url}/rest/v1/${tabela}${consulta ? '?' + consulta : ''}`, {
       method: metodo,
-      headers: { apikey: chave, Authorization: `Bearer ${chave}`, 'Content-Type': 'application/json', Prefer: prefer },
+      headers: { ...auth, 'Content-Type': 'application/json', Prefer: prefer },
       body: corpo === undefined ? undefined : JSON.stringify(corpo),
     });
     if (!r.ok) throw new Error(`rest ${r.status}`);
@@ -67,6 +86,8 @@ export function doUsuario(rest, userId) {
     userId,
     listar: (tabela, q = '') => rest('GET', tabela, comDono(q)),
     inserir: (tabela, linha, q = '', prefer) => rest('POST', tabela, q, { ...linha, user_id: userId }, prefer),
+    // Total gasto por mês, agregado no banco (não esbarra no limite de 1000 linhas do PostgREST).
+    gastosPorMes: (desde) => rest('POST', 'rpc/gastos_por_mes', '', { p_user: userId, p_desde: desde }),
     apagar: async (tabela, id) => {
       if (!UUID.test(String(id))) throw new Error('id inválido');
       return rest('DELETE', tabela, comDono('id=eq.' + id));
@@ -86,13 +107,20 @@ const menosDias = (iso, n) => new Date(Date.parse(iso + 'T00:00:00Z') - n * 8640
 
 async function carregarDados(u, hoje) {
   const [config] = await u.listar('config', 'select=*');
-  const inicio = config?.mes_inicio ? mesDe(config.mes_inicio) : mesDe(hoje);
-  const desde = (inicio < mesDe(hoje) ? inicio : mesDe(hoje)) + '-01';
-  // ponytail: o PostgREST devolve até 1000 linhas por padrão; com mais lançamentos desde o início, paginar.
-  const [contas, receitas, compromissos, parcelas, lancamentos] = await Promise.all([
+  const dia = hojeEfetivo({ config }, hoje);
+  const inicio = config?.mes_inicio ? mesDe(config.mes_inicio) : mesDe(dia);
+  const desde = (inicio < mesDe(dia) ? inicio : mesDe(dia)) + '-01';
+  const [contas, receitas, compromissos, parcelas, meses, doDia] = await Promise.all([
     u.listar('contas', 'select=*'), u.listar('receitas', 'select=*'), u.listar('compromissos', 'select=*'),
-    u.listar('parcelas', 'select=*'), u.listar('lancamentos', `select=*&data=gte.${desde}`),
+    u.listar('parcelas', 'select=*'), u.gastosPorMes(desde), u.listar('lancamentos', `select=data,valor&data=eq.${dia}`),
   ]);
+  // resumoMes só precisa do total por mês (projeção) e das linhas do dia (gastosHoje). Cada mês vira uma linha
+  // sintética com data 'AAAA-MM' (nunca igual a hoje), sem o que já veio nas linhas do dia.
+  const somaDia = doDia.reduce((s, l) => s + Number(l.valor), 0);
+  const lancamentos = meses.map((m) => {
+    const mes = mesDe(m.mes);
+    return { data: mes, valor: Math.round((Number(m.total) - (mes === mesDe(dia) ? somaDia : 0)) * 100) / 100 };
+  }).concat(doDia);
   return { contas, receitas, compromissos, parcelas, lancamentos, config: config || null };
 }
 
