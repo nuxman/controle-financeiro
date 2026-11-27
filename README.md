@@ -2,7 +2,7 @@
 
 Consultor financeiro pessoal: mostra se você está bem, quanto pode gastar hoje sem faltar dinheiro nos próximos meses, e simula o efeito de uma compra (à vista ou parcelada) antes de você decidir.
 
-- **Front-end:** HTML + JavaScript puro, publicado no GitHub Pages. Sem bibliotecas externas.
+- **Front-end:** HTML + JavaScript puro, publicado no GitHub Pages. Única biblioteca: pdf.js, copiado em `vendor/pdfjs/` (sem CDN).
 - **Dados e login:** Supabase (PostgreSQL + Auth), protegido por Row Level Security.
 
 ## Como o app calcula
@@ -12,6 +12,10 @@ Consultor financeiro pessoal: mostra se você está bem, quanto pode gastar hoje
 3. A cada mês, o app soma: receitas − contas − parcelas − poupança − gastos (reais nos meses passados e no atual, previstos nos futuros).
 4. **Disponível no mês** = o menor saldo previsto daqui para frente. Se um mês futuro vai ficar no vermelho, a sobra de hoje é reservada para ele.
 5. **Pode gastar hoje** = disponível ÷ dias que faltam no mês.
+
+6. **Indicadores** (comprometimento, parcelas, poupança, reserva) usam a **média dos próximos 3 meses**: receitas e contas recorrentes, parcelas e o gasto variável previsto. Assim, uma parcela que acaba no mês que vem ou um 13º não distorcem o retrato.
+
+Em **Preferências**, o botão **Usar a soma das contas-correntes em reais** preenche o saldo inicial (contas em USD/BTC, reservas e investimentos ficam de fora). Em **Contas**, **editar** muda nome, tipo, moeda e quantidade; **saldo** atualiza só o saldo (ou a cotação, em USD/BTC).
 
 Compras no crédito contam no mês em que você compra (não quando a fatura chega). Compras parceladas pesam em cada mês da parcela.
 

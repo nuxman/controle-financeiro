@@ -92,8 +92,12 @@ test('simulação de compra parcelada', () => {
 test('indicadores', () => {
   const i = c.indicadores(base(), '2027-01-05');
   const byId = Object.fromEntries(i.lista.map((x) => [x.id, x]));
-  assert.equal(byId.reserva.valor, 12000 / (2000 + 500 + 4000));
-  assert.equal(byId.reserva.status, 'ruim'); // 1,8 mês < 3
+  // Média de fev, mar e abr/27: a parcela (dez a fev) só aparece em fev → 500/3.
+  assert.deepEqual(i.meses, ['2027-02', '2027-03', '2027-04']);
+  assert.equal(byId.reserva.valor, 12000 / (2000 + 166.67 + 4000));
+  assert.equal(byId.reserva.status, 'ruim'); // 1,9 mês < 3
+  assert.equal(byId.parcelas.valor, 166.67 / 15000);
+  assert.equal(byId.poupanca.valor, (15000 - 2000 - 166.67 - 4000) / 15000);
   assert.ok(['ok', 'atencao', 'ruim'].includes(i.geral));
 });
 

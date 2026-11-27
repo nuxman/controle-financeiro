@@ -62,6 +62,7 @@
         <div class="card">
           <h2>Indicadores</h2>
           <p class="nota">Referências de mercado, não regras. Você decide.</p>
+          <p class="nota" id="ind-base"></p>
           <ul class="indicadores" id="lista-indicadores"></ul>
         </div>
 
@@ -168,6 +169,7 @@
               <label>Meta de poupança por mês (R$) <input type="number" name="meta_poupanca" min="0" max="9999999" step="0.01"></label>
               <label>Gasto variável previsto por mês (R$) <input type="number" name="gasto_variavel_previsto" min="0" max="9999999" step="0.01"></label>
             </div>
+            <button type="button" class="sec" id="usar-correntes">Usar a soma das contas-correntes em reais</button>
             <p class="nota">Saldo inicial: soma das contas-correntes no dia em que o controle começa (sem reservas e investimentos). Gasto variável previsto: mercado, combustível, lazer etc., usado para projetar os meses futuros.</p>
             <button type="submit">Salvar</button>
           </form>

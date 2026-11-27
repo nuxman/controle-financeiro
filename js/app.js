@@ -137,6 +137,7 @@ function renderPainel() {
   $('#k-conta').textContent = c.brl(corrente);
   $('#k-reserva').textContent = `reserva e investimentos ${c.brl(reserva)}`;
 
+  $('#ind-base').textContent = `Calculados pela média de ${ind.meses.map(c.nomeMes).join(', ')}: receitas e contas recorrentes, parcelas e gasto variável previsto.`;
   $('#lista-indicadores').replaceChildren(...ind.lista.map((i) => h('li', { class: STATUS[i.status][1] },
     h('span', { class: 'bola' }), h('span', { class: 'nome' }, i.nome),
     h('strong', {}, i.tipo === 'pct' ? c.pct(i.valor) : (i.valor == null ? '—' : i.valor.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' meses')),
@@ -287,8 +288,14 @@ function renderCadastros() {
         else linha[nome] = el.value.trim() || null;
       }
       if ('recorrente' in linha && !linha.recorrente && !linha.mes) { aviso('Informe o mês ou marque "Todo mês".', 'atencao'); return; }
+      const antes = form.dataset.editando && dados[cfg.tabela].find((x) => x.id === form.dataset.editando);
+      if (antes && linha.cotacao != null && Number(antes.cotacao) === linha.cotacao) linha.cotacao_em = antes.cotacao_em; // cotação não mudou: mantém a data
       if (cfg.ajustar) { const erro = cfg.ajustar(linha); if (erro) { aviso(erro, 'atencao'); return; } }
-      await seguro(async () => { await db.inserir(cfg.tabela, linha); await carregar(); aviso('Salvo.'); });
+      const id = form.dataset.editando;
+      // Conta que deixou de ser USD/BTC: limpa quantidade e cotação (só quando a 002 já rodou).
+      if (id && cfg.tabela === 'contas' && !('moeda' in linha) && 'moeda' in (dados.contas.find((x) => x.id === id) || {}))
+        Object.assign(linha, { moeda: 'BRL', quantidade: null, cotacao: null, cotacao_em: null });
+      await seguro(async () => { await (id ? db.atualizar(cfg.tabela, id, linha) : db.inserir(cfg.tabela, linha)); await carregar(); aviso('Salvo.'); });
     });
     const itens = dados[cfg.tabela] || [];
     return h('div', { class: 'card' },
@@ -297,7 +304,8 @@ function renderCadastros() {
       h('ul', { class: 'lista' }, itens.length ? itens.map((x) => {
         const [txt, val] = cfg.linha(x);
         const acoes = [h('button', { type: 'button', class: 'mini', 'aria-label': 'Apagar', onclick: () => apagar(cfg.tabela, x.id) }, '✕')];
-        if (cfg.tabela === 'contas') acoes.unshift(h('button', { type: 'button', class: 'mini', onclick: () => editarSaldo(x) }, 'saldo'));
+        if (cfg.tabela === 'contas') acoes.unshift(h('button', { type: 'button', class: 'mini', onclick: () => editarSaldo(x) }, 'saldo'),
+          h('button', { type: 'button', class: 'mini', onclick: () => editarConta(form, x) }, 'editar'));
         return h('li', {}, h('span', { class: 'desc' }, txt), h('strong', {}, val), ...acoes);
       }) : h('li', { class: 'nota' }, 'Nada cadastrado.')),
       h('details', {}, h('summary', {}, 'Adicionar'), form));
@@ -317,6 +325,15 @@ function normalizarConta(x) {
   }
   if (!(x.saldo >= -9999999 && x.saldo <= 99999999)) return 'Saldo fora da faixa.';
   x.atualizado_em = c.hojeISO();
+}
+
+// Abre o formulário de contas preenchido com a conta; ao salvar, atualiza em vez de criar.
+function editarConta(form, x) {
+  form.dataset.editando = x.id;
+  for (const k of ['nome', 'tipo', 'saldo', 'quantidade', 'cotacao']) form.elements[k].value = x[k] ?? '';
+  form.elements.moeda.value = x.moeda || 'BRL';
+  form.querySelector('button[type=submit]').textContent = `Salvar ${x.nome}`;
+  const det = form.closest('details'); det.open = true; det.scrollIntoView({ block: 'nearest' });
 }
 
 const numBR = (v) => Number(String(v).trim().replace(/\./g, '').replace(',', '.'));
@@ -359,6 +376,11 @@ function preencherConfig() {
   f.saldo_inicial.value = dados.config?.saldo_inicial ?? 0;
   f.mes_inicio.value = dados.config?.mes_inicio ? String(dados.config.mes_inicio).slice(0, 7) : c.mesDe(c.hojeISO());
 }
+$('#usar-correntes').addEventListener('click', () => {
+  const correntes = dados.contas.filter((x) => x.tipo === 'corrente' && (x.moeda || 'BRL') === 'BRL');
+  $('#form-config').saldo_inicial.value = c.soma2(correntes.map((x) => x.saldo));
+  aviso(`Soma de ${correntes.length} conta(s)-corrente(s) em reais. Clique em Salvar para confirmar.`);
+});
 $('#form-config').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const f = ev.target;

@@ -164,12 +164,15 @@ export function simular(d, compra, hoje = hojeISO()) {
 export function indicadores(d, hoje = hojeISO()) {
   hoje = hojeEfetivo(d, hoje);
   const mes = mesDe(hoje);
-  // Indicadores estruturais: só receitas e contas recorrentes (13º, bônus e faturas antigas distorceriam).
-  const renda = receitasMes(d.receitas.filter((r) => r.recorrente), mes);
-  const fixos = compromissosMes(d.compromissos.filter((x) => x.recorrente), mes);
-  const parc = parcelasMes(d.parcelas, mes);
+  // Indicadores estruturais: média dos PRÓXIMOS 3 meses (mes+1 a mes+3), só receitas e contas recorrentes,
+  // parcelas e o gasto variável previsto (13º, bônus, faturas antigas e o gasto já feito no mês distorceriam).
+  const MESES_MEDIA = [1, 2, 3].map((k) => addMeses(mes, k));
+  const media = (f) => r2(soma(MESES_MEDIA, f) / MESES_MEDIA.length);
+  const renda = media((m) => receitasMes(d.receitas.filter((r) => r.recorrente), m));
+  const fixos = media((m) => compromissosMes(d.compromissos.filter((x) => x.recorrente), m));
+  const parc = media((m) => parcelasMes(d.parcelas, m));
   const previsto = num(d.config?.gasto_variavel_previsto);
-  const variavel = Math.max(gastosMes(d.lancamentos, mes), previsto);
+  const variavel = previsto;
   const reservas = soma(d.contas.filter((c) => c.tipo !== 'corrente'), (c) => num(c.saldo));
   const custoMensal = fixos + parc + previsto;
   const faixa = (v, ok, atencao, maiorMelhor) => {
@@ -189,7 +192,7 @@ export function indicadores(d, hoje = hojeISO()) {
   ];
   const ordem = { ruim: 3, atencao: 2, ok: 1, sem_dados: 0 };
   const geral = lista.reduce((pior, i) => (ordem[i.status] > ordem[pior] ? i.status : pior), 'sem_dados');
-  return { geral, lista };
+  return { geral, lista, meses: MESES_MEDIA };
 }
 
 // ---------------- Lançamento rápido: "45,90 mercado pix" / "300 tênis crédito 3x" ----------------
@@ -223,6 +226,7 @@ export function nomeMes(mes) {
 // ---------------- Contas em outra moeda ----------------
 // Saldo em R$ = quantidade × cotação. Só a quantidade é guardada (nada de chave, seed ou endereço).
 export const MOEDAS = ['BRL', 'USD', 'BTC'];
+export const soma2 = (vals) => r2(soma(vals, num));
 export const saldoEmReais = (quantidade, cotacao) => r2(num(quantidade) * num(cotacao));
 // Resposta da AwesomeAPI (/json/last/USD-BRL,BTC-BRL) → { USD: 5.1, BTC: 500000 }. Ignora o que não for número válido.
 export function cotacoesDaApi(json) {
