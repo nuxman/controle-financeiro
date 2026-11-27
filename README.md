@@ -111,4 +111,4 @@ node --test tests/*.test.mjs
 - Resumo diário por e-mail/Telegram (Supabase Edge Function + agendamento)
 - Importação de extratos (CSV/OFX)
 - Revisão mensal automática e metas
-- Lançamento pelo WhatsApp
+- Lançamento pelo WhatsApp por foto de comprovante / QR code da NFC-e

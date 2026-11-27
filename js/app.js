@@ -481,7 +481,7 @@ function revisarFatura(f, hash) {
     }
     return h('tr', { class: l.duplicata ? 'dup' : null },
       h('td', {}, dataBR(l.data).slice(0, 5)),
-      h('td', {}, l.descricao, l.duplicata ? h('small', {}, `Parecido com: ${dataBR(l.duplicata.data)} ${l.duplicata.descricao || l.duplicata.categoria} ${c.brl(l.duplicata.valor)}`) : null),
+      h('td', {}, l.descricao, l.duplicata ? h('small', {}, `Parecido com: ${dataBR(l.duplicata.data)} ${l.duplicata.descricao || l.duplicata.categoria} ${c.brl(l.duplicata.valor)}${l.duplicata.origem === 'whatsapp' ? ' (via WhatsApp)' : ''}`) : null),
       h('td', { class: 'd' }, c.brl(l.valor)),
       h('td', {}, l.cartao.replace(/^\S+ final /, '')),
       h('td', {}, l.acao === 'lancamento' || l.parcelaNova ? cat : '—'),

@@ -19,3 +19,7 @@ faturas/
 .DS_Store
 Thumbs.db
 node_modules/
+
+# Segredos da Edge Function (o .env.example, só com nomes, fica)
+supabase/functions/.env
+!supabase/functions/.env.example
