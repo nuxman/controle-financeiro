@@ -39,7 +39,7 @@ Em **Project Settings → API** (ou **API Keys**), copie a **Project URL** e a c
 
 ## Importar PDF (aba Importar)
 
-Faturas do **Bradesco** e do **Nubank**. Escolha o arquivo e o tipo (ou deixe "Detectar pelo texto").
+Faturas do **Bradesco** e do **Nubank** e contracheque do **TJRO**. Escolha o arquivo e o tipo (ou deixe "Detectar pelo texto").
 
 **O que fica só no navegador:** o PDF, o texto extraído dele e a senha do PDF. A leitura é feita pelo [pdf.js](https://mozilla.github.io/pdf.js/) copiado em `vendor/pdfjs/` (versão fixa, licença Apache-2.0 junto), carregado do próprio site. Nada disso é enviado a servidor nem a serviço de IA. Só vão para o Supabase as linhas que você confirmar na tela de revisão, mais um registro em `importacoes` com o **hash SHA-256** do texto (não o texto), o tipo, a competência e os totais.
 
@@ -52,6 +52,16 @@ Faturas do **Bradesco** e do **Nubank**. Escolha o arquivo e o tipo (ou deixe "D
    - a fatura → compromisso pontual no mês do vencimento (desmarque se já foi paga).
 3. Lançamentos parecidos (mesmo valor ±R$ 0,01, até 2 dias de diferença) aparecem destacados; você escolhe, linha a linha, qual manter.
 4. O mesmo arquivo (mesmo hash) não pode ser importado duas vezes. Para desfazer uma importação, apague a linha dela em `importacoes` no Supabase: o que ela criou é apagado junto (`on delete cascade`). Atualizações feitas em parcelas que já existiam não são desfeitas.
+
+### Contracheque (TJRO / eGesp)
+
+Só a **página 1** é extraída (as páginas 2 e 3, com memória de cálculo e dependentes, nem são lidas), e a leitura para em "Dependentes I.R.". Nome, CPF, PIS, matrícula, banco, agência e conta não são lidos nem guardados: o leitor pega só a referência, a tabela de rubricas, os totais e a margem.
+
+- Remuneração ou desconto é decidido pela **coluna** em que o valor está, não pelo nome da rubrica.
+- Conferências (±R$ 0,05): soma das remunerações = Total Bruto, soma dos descontos = Total de Descontos, bruto − descontos = líquido. Se não bater, não importa.
+- Classificação (ajustável em `REGRAS`, em `js/import/contracheque.js`): **pontual** (começa com DIF., DEV., ATUALIZAÇÃO MONETÁRIA, RESTITUIÇÃO, EXERCÍCIO ANTERIOR, ou contém 13, NATALINA, FÉRIAS, 1/3, ABONO), **consignado** (EMPRESTIMO/CONSIGNA com prazo n/m) e **todo mês** (o resto).
+- Líquido que se repete = líquido − remunerações pontuais + descontos pontuais + IR estimado das pontuais, onde IR = (pontuais tributáveis − previdência pontual) × alíquota do IRRF. A conta aparece na tela.
+- Na confirmação: a receita recorrente "Salário (líquido)" passa a valer o novo valor a partir do mês seguinte (a antiga termina no mês do contracheque); 13º/férias/abono viram receita pontual (líquido estimado); cada consignado vira uma receita recorrente "Fim de consignado" a partir do mês seguinte à última parcela, que representa o aumento do líquido. **Consignados nunca viram compromisso.** Plano de saúde e margem aparecem só como informação.
 
 PDF com senha: o app pede a senha num campo de senha, usa só para abrir o arquivo e esquece.
 

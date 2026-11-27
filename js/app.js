@@ -4,6 +4,7 @@ import * as c from './calc.js';
 import { lerPdf } from './import/pdf.js';
 import { textoDe, sha256, detectarTipo } from './import/texto.js';
 import { lerFaturaBradesco, lerFaturaNubank, planoFatura } from './import/faturas.js';
+import { lerContracheque, analisar, planoContracheque } from './import/contracheque.js';
 
 // Impede que a página seja exibida dentro de outro site (clickjacking).
 if (window.top !== window.self) { document.body.textContent = ''; throw new Error('frame'); }
@@ -450,6 +451,78 @@ function gravarFatura(f, p, hash, criarFatura) {
       if (l.duplicata && l.manter === 'importado') await db.apagar('lancamentos', l.duplicata.id);
     }
     if (p.compromissoExistente) await (comp ? db.atualizar('compromissos', p.compromissoExistente, { valor: comp.valor }) : db.apagar('compromissos', p.compromissoExistente));
+  });
+}
+
+// ---------------- Contracheque ----------------
+const CLASSE = { recorrente: 'Todo mês', pontual: 'Pontual', consignado: 'Consignado' };
+LEITORES.contracheque = (linhas, hash) => revisarContracheque(lerContracheque(linhas), hash);
+
+function revisarContracheque(cc, hash) {
+  const t = cc.totais, k = cc.conferencia;
+  const resumo = h('ul', { class: 'fatos' },
+    h('li', {}, `Contracheque ${cc.competencia ? c.nomeMes(cc.competencia) : '—'} · ${cc.folha.toLowerCase()}` + (cc.credito ? ` · crédito em ${dataBR(cc.credito)}` : '')),
+    h('li', {}, `Bruto ${c.brl(t.bruto)} − descontos ${c.brl(t.descontos)} = líquido ${c.brl(t.liquido)}`),
+    h('li', {}, `Conferência: remunerações ${c.brl(k.somaRem)} (dif. ${c.brl(k.difBruto)}) · descontos ${c.brl(k.somaDes)} (dif. ${c.brl(k.difDescontos)}) · líquido (dif. ${c.brl(k.difLiquido)})`));
+  if (cc.erros.length) { $('#revisao').replaceChildren(caixaErros(cc.erros, resumo)); return; }
+
+  const a = analisar(cc);
+  const itens = planoContracheque(cc, a, dados);
+  const tabela = h('div', { class: 'tabela' }, h('table', {},
+    h('thead', {}, h('tr', {}, ['Rubrica', 'Remuneração', 'Desconto', 'Tipo'].map((x, i) => h('th', { class: i === 1 || i === 2 ? 'd' : null }, x)))),
+    h('tbody', {}, cc.rubricas.map((r) => h('tr', {},
+      h('td', {}, r.descricao),
+      h('td', { class: 'd' }, r.lado === 'remuneracao' ? c.brl(r.valor) : ''),
+      h('td', { class: 'd' }, r.lado === 'desconto' ? c.brl(r.valor) : ''),
+      h('td', {}, CLASSE[r.classe] + (r.classe === 'consignado' ? ` ${r.prazo.n}/${r.prazo.m}` : '')))))));
+
+  const rotulo = (i) => {
+    if (i.id === 'salario') {
+      const v = i.atualizar ? i.atualizar.campos.valor : i.criar.valor;
+      return `Receita recorrente "Salário (líquido)": ${c.brl(v)} a partir de ${c.nomeMes(c.addMeses(cc.competencia, 1))}` +
+        (i.atualizar ? ' (troca o valor da já cadastrada)' : i.encerrar ? ` (a atual, de ${c.brl(i.valorAnterior)}, termina em ${c.nomeMes(cc.competencia)})` : '');
+    }
+    if (i.id === 'folha') return `Receita pontual "${i.criar.descricao}": ${c.brl(i.criar.valor)} em ${c.nomeMes(c.mesDe(i.criar.mes))}`;
+    if (i.id.startsWith('extra')) return `Receita pontual "${i.criar.descricao}": ${c.brl(i.criar.valor)} (líquido estimado) em ${c.nomeMes(c.mesDe(i.criar.mes))}`;
+    return `Receita recorrente "${i.criar.descricao}": +${c.brl(i.criar.valor)} a partir de ${c.nomeMes(c.mesDe(i.criar.inicio))} (o desconto deixa de existir)`;
+  };
+  const caixas = itens.map((i) => {
+    const cb = h('input', { type: 'checkbox', checked: true });
+    cb.addEventListener('change', () => { i.marcado = cb.checked; });
+    return h('label', { class: 'check' }, cb, rotulo(i));
+  });
+
+  const info = h('ul', { class: 'fatos' },
+    h('li', {}, `Líquido deste mês: ${c.brl(t.liquido)}.`),
+    a.normal ? h('li', {}, 'Líquido que se repete = líquido − remunerações pontuais + descontos pontuais + IR estimado das pontuais:',
+      h('div', { class: 'formula' }, a.formula), h('div', { class: 'formula' }, `IR estimado = (pontuais tributáveis − previdência pontual) × alíquota = ${a.formulaIR}`)) : null,
+    a.consignados.length ? h('li', {}, 'Consignados (só informação, não viram compromisso): ',
+      a.consignados.map((x) => h('small', {}, `${x.descricao} ${c.brl(x.valor)} · parcela ${x.n}/${x.m} · última em ${c.nomeMes(x.ultimoMes)}`))) : null,
+    a.plano.mensalidade || a.plano.coparticipacao ? h('li', {}, `Plano de saúde: mensalidade ${c.brl(a.plano.mensalidade)} + coparticipação ${c.brl(a.plano.coparticipacao)} − auxílio-saúde ${c.brl(a.plano.auxilio)} = custo líquido ${c.brl(a.plano.liquido)}.`) : null,
+    cc.margem.base != null ? h('li', { class: 'nota' }, `Margem consignável (informativo): base ${c.brl(cc.margem.base)}, empréstimos ${c.brl(cc.margem.emprestimos)}, disponível ${c.brl(cc.margem.disponivel)}.`) : null);
+
+  const btn = h('button', { type: 'button' }, 'Confirmar importação');
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    if (await gravarContracheque(cc, itens, hash)) concluido('Contracheque importado.');
+    else btn.disabled = false;
+  });
+  $('#revisao').replaceChildren(h('div', { class: 'card revisao' }, h('h2', {}, 'Revisar antes de gravar'), resumo, tabela, info,
+    h('p', { class: 'nota' }, 'O que será gravado (desmarque o que não quiser):'), caixas, btn));
+}
+
+function gravarContracheque(cc, itens, hash) {
+  const marcados = itens.filter((i) => i.marcado);
+  return gravarImportacao({ hash, tipo: 'contracheque', competencia: cc.competencia + '-01', total: cc.totais.liquido,
+    total_bruto: cc.totais.bruto, total_descontos: cc.totais.descontos, liquido: cc.totais.liquido }, async (id) => {
+    const novas = marcados.filter((i) => i.criar).map((i) => ({ ...i.criar, importacao_id: id }));
+    if (novas.some((n) => !(n.valor > 0 && n.valor < 10000000))) throw new Error('Valor inválido.');
+    if (novas.length) await db.inserir('receitas', novas);
+  }, async () => {
+    for (const i of marcados) {
+      if (i.encerrar) await db.atualizar('receitas', i.encerrar.id, i.encerrar.campos);
+      if (i.atualizar) await db.atualizar('receitas', i.atualizar.id, i.atualizar.campos);
+    }
   });
 }
 

@@ -1,0 +1,84 @@
+                                                                   04.293.700/0001-72
+
+                                                  Tribunal de Justiça do Estado de Rondônia
+                                             Rua José Camacho, 585, Olaria - CEP 76.801-330
+                                                                     Porto Velho - RO
+
+
+
+                                                        Demonstrativo de Pagamento
+                                                            Referência Novembro/2026
+                                                                            Folha Normal
+
+
+  Matrícula:          Nome:                                                                   CPF:                    Data Admissão:                 Vínculo:
+  0000000-0           FULANO DE TAL SILVA                                                     000.000.000-00          01/01/2010
+
+  Cargo Efetivo:
+  CARGO EXEMPLO
+
+  Lotação:
+  Unidade Exemplo
+
+  Banco:                               Agência:                                                                         Conta:                             PIS/PASEP:
+  BANCO BRADESCO S.A.                  0000 - AGENCIA EXEMPLO                                          00000-0                           00000000000
+
+
+
+  Descrição                                                                        Prazo     Qtd. / %         Remunerações (R$)                           Descontos (R$)
+
+  VENCIMENTO EFETIVO                                                                1 /1       30.0                          8.000,00
+
+  ADICIONAL DE QUALIFICAÇÃO / PÓS-GRADUAÇÃO                                         1 /1       18.0                              1.440,00
+
+  VANTAGEM PESSOAL DE ADICIONAL DE QUALIFICAÇÃO (500 H)                             1 /1       10.0                                700,00
+
+  ATUALIZAÇÃO MONETÁRIA - INCIDE IRRF                                               1 /1        2.0                                   5,00
+
+  AUXILIO TRANSPORTE                                                                1 /1       19.0                               400,00
+
+  AUXILIO ALIMENTACAO - SEM INCIDÊNCIA DE PREVIDÊNCIA                               1 /1       30.0                              1.800,00
+
+  GRATIFICAÇÃO POR ATIVIDADE - GTIC                                                 1 /1                                         3.000,00
+
+  AUXILIO SAÚDE INDENIZADO                                                          1 /1                                         1.000,00
+
+  DIF. VENCIMENTO EFETIVO                                                           1 /1                                           900,00
+
+  DIF. ADICIONAL DE QUALIFICAÇÃO / PÓS-GRADUAÇÃO                                    1 /1                                          150,00
+
+  UNIMED MENSALIDADE                                                                1 /1        5.0                                                                       1.200,00
+
+  UNIMED - COPARTICIPAÇÃO                                                           1 /1        9.0                                                                           100,00
+
+  IPERON - CAPITALIZADO                                                             1 /1       14.0                                                                       1.400,00
+
+  EMPRESTIMO - BANCO BRADESCO                                                      25 /48                                                                                     500,00
+
+  EMPRESTIMO - BANCO BRADESCO                                                      27 /48                                                                                   800,00
+
+  SINDICATO MENSAL                                                                  1 /1        1.0                                                                           100,00
+
+  IRRF                                                                              1 /1       27.5                                                                       2.900,00
+
+  DIF. IPERON - CAPITALIZADO                                                        1 /1                                                                                      150,00
+
+  DEV. ATUALIZAÇÃO MONETÁRIA - ISENTA IRRF                                          1 /1        1.0                                                                             1,00
+
+  DEV. AUXILIO TRANSPORTE                                                           1 /1        2.0                                                                            40,00
+
+
+
+  Data Crédito:                          Total Bruto:                                 Total de Descontos:                           Valor Líquido:
+                                         R$ 17.395,00                                 R$ 7.191,00                                  R$ 10.204,00
+
+  Base para Margem:               Margem Calculada (30%):   Margem Calculada (70%):         Descontos para Margem:   Emprestimos:                        Margem Disponível:
+  R$ 10.140,00                    R$ 3.042,00               R$ 7.098,00                     R$ 100,00                R$ 1.300,00                         R$ 1.642,00
+
+  Base de Cálculo IRRF:                                     Base Previdenciária:                                        Dependentes I.R.:
+  R$ 13.000,00                                              R$ 10.140,00                                                0
+
+
+
+
+Emitido em 01/01/2026/ 00:00:00                         Via: eGesp - Por: FULANO DE TAL SILVA                                                                                  1 de 3
