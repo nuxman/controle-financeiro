@@ -98,6 +98,10 @@ PDF com senha: o app pede a senha num campo de senha, usa só para abrir o arqui
 - O GitHub Pages não permite cabeçalhos HTTP próprios, então a CSP vai por `<meta>`, e `frame-ancestors` não funciona por esse meio. Há uma checagem em JavaScript no lugar.
 - O plano gratuito do Supabase pausa o projeto após um período sem uso.
 
+## Versão
+A versão aparece no rodapé do app. A cada mudança publicada, aumente o número em `js/versao.js` **e** em `versao.json` (o teste `tests/versao.test.mjs` confere que são iguais): MENOR para funcionalidade nova, CORREÇÃO para conserto.
+Se o navegador estiver com arquivos antigos em cache, o rodapé mostra o botão "Nova versão disponível: atualizar".
+
 ## Testes
 ```
 node --test tests/*.test.mjs

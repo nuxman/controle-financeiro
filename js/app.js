@@ -6,6 +6,8 @@ import { textoDe, sha256, detectarTipo } from './import/texto.js';
 import { lerFaturaBradesco, lerFaturaNubank, planoFatura } from './import/faturas.js';
 import { lerContracheque, analisar, planoContracheque, rendaAntesDepois } from './import/contracheque.js';
 import * as g from './import/gravar.js';
+import { VERSAO, DATA_VERSAO } from './versao.js';
+
 
 // Impede que a página seja exibida dentro de outro site (clickjacking).
 if (window.top !== window.self) { document.body.textContent = ''; throw new Error('frame'); }
@@ -593,4 +595,21 @@ function revisarContracheque(cc, hash) {
 const gravarContracheque = (cc, itens, hash) => gravar(() => g.gravarContracheque(db, cc, itens, hash));
 
 // ---------------- Início ----------------
+// ---------------- Versão ----------------
+// Mostra a versão em uso e avisa quando o site publicado tem uma mais nova (navegador com arquivos antigos em cache).
+$('#versao').textContent = `Versão ${VERSAO} · ${DATA_VERSAO.split('-').reverse().join('/')}`;
+$('#btn-atualizar').addEventListener('click', () => location.reload());
+async function conferirVersao() {
+  try {
+    const r = await fetch('versao.json', { cache: 'no-store' });
+    const j = await r.json();
+    if (typeof j.versao === 'string' && j.versao !== VERSAO) {
+      $('#btn-atualizar').textContent = `Nova versão ${j.versao.slice(0, 20)} disponível: atualizar`;
+      $('#btn-atualizar').hidden = false;
+    }
+  } catch { /* sem rede: ignora */ }
+}
+conferirVersao();
+document.addEventListener('visibilitychange', () => { if (!document.hidden) conferirVersao(); });
+
 if (db.logado) mostrarApp(); else mostrarLogin();
