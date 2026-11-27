@@ -24,6 +24,7 @@ Compras no crédito contam no mês em que você compra (não quando a fatura che
 ### 1. Supabase (projeto separado do app de remédios)
 1. Em supabase.com, crie um **novo projeto** só para este app. Assim, um problema num app não expõe os dados do outro.
 2. **SQL Editor** → cole e rode `supabase/schema.sql` e depois `supabase/002_evolucao.sql` (importação de PDFs e contas em outra moeda; pode rodar de novo sem erro).
+   Para lançar pelo WhatsApp, rode também `supabase/003_whatsapp.sql` (veja [Lançar pelo WhatsApp](#lançar-pelo-whatsapp)).
 3. Rode `supabase/verificar_seguranca.sql`. Todas as linhas devem mostrar `rls = true`, `rls_forcado = true`, `policies = 1`, `anon_pode_ler = false` e `trava_dono = true`.
 4. **Authentication → Sign In / Providers → Email:** desligue **"Allow new users to sign up"**.
 5. **Authentication → Users → Add user:** crie o seu usuário com uma senha forte (12+ caracteres) e marque "Auto Confirm".
@@ -88,6 +89,7 @@ PDF com senha: o app pede a senha num campo de senha, usa só para abrir o arqui
 | Clickjacking | O app não abre dentro de `<iframe>` de outro site |
 | Valores absurdos | `CHECK` no banco (valor > 0, limites de tamanho, mês sempre dia 1) |
 | CSRF | Não se aplica: a autenticação vai no cabeçalho `Authorization`, não em cookie |
+| Alguém usar o bot do WhatsApp ou forjar o webhook | Assinatura HMAC da Meta conferida em tempo constante; só números em `whatsapp_vinculos`, os demais ignorados em silêncio; toda consulta filtrada por `user_id`; limite de 30/hora; segredos só em `supabase secrets` |
 
 **CSP** (`<meta>` no `index.html`): `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://*.supabase.co https://economia.awesomeapi.com.br; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'`.
 - `connect-src … https://economia.awesomeapi.com.br`: só para o botão opcional **Atualizar cotação** (dólar e bitcoin). Escolhida por ser uma única API pública brasileira, sem chave, com CORS aberto, que devolve USD-BRL e BTC-BRL numa só chamada (`/json/last/USD-BRL,BTC-BRL`). A requisição não leva nenhum dado seu (sem cookies, sem referrer, sem quantidade). Se ela falhar, a cotação manual continua funcionando. Para não usar, apague esse domínio da CSP: o botão passa a avisar que não conseguiu e segue o manual.
@@ -97,6 +99,87 @@ PDF com senha: o app pede a senha num campo de senha, usa só para abrir o arqui
 - O token de sessão fica no `localStorage` (para não pedir login toda hora no celular). Se um XSS acontecer, ele pode ser lido. A CSP reduz esse risco, mas não o elimina.
 - O GitHub Pages não permite cabeçalhos HTTP próprios, então a CSP vai por `<meta>`, e `frame-ancestors` não funciona por esse meio. Há uma checagem em JavaScript no lugar.
 - O plano gratuito do Supabase pausa o projeto após um período sem uso.
+
+## Lançar pelo WhatsApp
+
+Mande uma mensagem para o número do bot e o gasto entra no app; a resposta traz quanto ainda pode gastar hoje.
+
+| Mensagem | O que faz |
+|---|---|
+| `45 mercado`, `30 uber pix`, `120 farmácia crédito`, `600 tênis 3x` | Registra como o lançamento rápido do app (mesmo parser, `parseRapido`). Parcelado vira uma linha em **parcelas**. Responde `✓ R$ 45,00 · Mercado · débito. Disponível hoje: R$ X (limite do dia R$ Y).` |
+| `hoje` | Gasto do dia, disponível hoje e disponível até o fim do mês |
+| `semana` | Gasto dos últimos 7 dias, 5 maiores categorias |
+| `desfazer` | Apaga o **último** lançamento feito pelo WhatsApp, se tiver menos de 15 minutos |
+| `ajuda` | Lista os comandos |
+
+Usa só a **API oficial da Meta** (WhatsApp Business Cloud API), recebida por uma Supabase Edge Function (`supabase/functions/whatsapp`). Nada de whatsapp-web.js, Baileys ou similares: violam os termos e o número pode ser banido. Nenhuma IA interpreta as mensagens.
+
+**Segurança do bot**
+- A função é publicada **sem JWT** (a Meta não manda um). A única porta de entrada é a assinatura `X-Hub-Signature-256` (HMAC-SHA256 do corpo bruto com o App Secret), conferida em tempo constante antes de ler o JSON. Sem ela ou errada: `401`.
+- Só números cadastrados em `whatsapp_vinculos` são atendidos. Qualquer outro é ignorado **em silêncio** (o bot nem responde).
+- A função usa a service role (ignora o RLS), por isso todo acesso passa por `doUsuario()` em `bot.js`, que põe `user_id = <do vínculo>` em toda consulta, inserção e exclusão (há teste para isso).
+- A Meta reenvia mensagens: o `wamid` de cada uma é gravado em `whatsapp_mensagens` (único), e a repetida não grava nada.
+- No máximo 30 mensagens por hora por número; acima disso, avisa uma vez e ignora.
+- Logs só com o tipo do evento e os 4 últimos dígitos do telefone: nunca o texto da mensagem.
+- Os lançamentos ganham `origem = 'whatsapp'` e o `wamid`. Na importação de fatura, um lançamento parecido que veio do WhatsApp aparece como "(via WhatsApp)".
+
+`supabase/functions/_shared/calc.js` é **cópia** de `js/calc.js` (o deploy só empacota o que está em `supabase/functions`). Depois de mexer em `js/calc.js`, rode `npm run copiar-calc`; o teste falha se as duas estiverem diferentes.
+
+### Configuração passo a passo
+
+Você vai precisar do [Supabase CLI](https://supabase.com/docs/guides/cli) instalado e logado (`supabase login`, `supabase link --project-ref SEU-PROJECT-REF`).
+
+**1. App na Meta**
+1. Entre em [developers.facebook.com](https://developers.facebook.com/) com sua conta do Facebook e aceite os termos de desenvolvedor.
+2. **Meus apps → Criar app**. No caso de uso, escolha **Outro → Business** (ou a opção que fala em "Conectar-se com clientes pelo WhatsApp"). *Tela:* uma lista de casos de uso com ícones; o WhatsApp aparece com o logo verde.
+3. Dê um nome (ex.: `controle-financeiro-bot`) e vincule a um **portfólio empresarial** (Business Manager). Se não tiver um, a tela oferece criar.
+4. No painel do app, em **Adicionar produtos**, clique em **Configurar** no card do **WhatsApp**. *Tela:* aparece o menu lateral **WhatsApp → Configuração da API** (API Setup).
+
+**2. Número do bot**
+- **Para começar: número de teste da Meta.** Em **WhatsApp → Configuração da API**, a Meta já criou um número de teste (campo **De / From**). No campo **Para / To**, clique em **Gerenciar lista de números** e adicione o seu celular; você recebe um código no WhatsApp para confirmar. *Tela:* abaixo dos campos aparecem o **Phone number ID** e o **WhatsApp Business Account ID**: copie o **Phone number ID** (vai virar `WHATSAPP_PHONE_NUMBER_ID`).
+- **Limitações do número de teste:** só envia para os números da lista de destinatários (até 5, segundo o painel: confira o que aparece no seu), não pode trocar o nome de exibição, não serve para uso real com terceiros, e a Meta pode limitar o volume. Para uso pessoal com o seu próprio celular, ele já resolve.
+- **Para passar a um número próprio:** use um chip que **não esteja** com o app WhatsApp nem o WhatsApp Business (se já estiver, apague a conta do WhatsApp naquele número antes: *Configurações → Conta → Apagar conta*; a Meta recusa números em uso). Em **WhatsApp → Configuração da API → Adicionar número de telefone**, informe o nome de exibição (passa por aprovação), confirme por SMS ou ligação e defina o **PIN de verificação em duas etapas** (guarde-o no seu gerenciador de senhas). Depois, registre o número na Cloud API (o painel mostra o botão ou o comando `POST /{PHONE_NUMBER_ID}/register` com o PIN). Troque `WHATSAPP_PHONE_NUMBER_ID` pelo ID do número novo e cadastre o vínculo de novo se o **seu** celular mudar (o vínculo é o número de quem manda, não o do bot).
+
+**3. Token permanente (System User)**
+O token que aparece em **Configuração da API** expira em 24 horas e não serve.
+1. Abra [business.facebook.com/settings](https://business.facebook.com/settings) → **Usuários → Usuários do sistema → Adicionar**. Nome: `bot-whatsapp`, função **Funcionário** (não Admin).
+2. Com ele selecionado, **Atribuir ativos**: escolha **Apps → o seu app** com controle total *e* **Contas do WhatsApp → a sua conta** (necessário para o token enxergar o número).
+3. **Gerar novo token**: escolha o app, validade **Nunca**, e marque **somente** `whatsapp_business_messaging`. *Tela:* uma lista de caixas de permissão; deixe todas as outras desmarcadas (o bot só envia mensagens).
+4. Copie o token (começa com `EAA…`). Ele aparece **uma única vez**. Não salve em arquivo do projeto, não cole em chat nem em issue.
+5. Em **Meus apps → seu app → Configurações do app → Básico**, clique em **Mostrar** no **Chave secreta do app** (App Secret): é o `WHATSAPP_APP_SECRET`.
+
+**4. Publicar a função e os segredos**
+Invente um verify token longo e aleatório (ex.: saída de `openssl rand -hex 32`). Rode no terminal, na pasta do projeto, trocando os valores (os comandos ficam no histórico do shell; se preferir, use `supabase secrets set --env-file` apontando para um arquivo **fora** do repositório ou para `supabase/functions/.env`, que está no `.gitignore`, e apague-o depois):
+```
+supabase secrets set WHATSAPP_TOKEN=EAA... WHATSAPP_APP_SECRET=... WHATSAPP_VERIFY_TOKEN=... WHATSAPP_PHONE_NUMBER_ID=... GRAPH_API_VERSION=v23.0
+supabase functions deploy whatsapp --no-verify-jwt
+```
+`GRAPH_API_VERSION`: use a versão mostrada nos exemplos de **Configuração da API** (formato `vNN.0`). `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` já existem na função: não defina.
+A URL da função fica `https://SEU-PROJECT-REF.supabase.co/functions/v1/whatsapp`.
+
+**5. Webhook**
+1. **WhatsApp → Configuração** (Configuration) → **Webhook → Editar**. *Tela:* dois campos, **URL de callback** e **Verificar token**.
+2. Cole a URL da função e o mesmo `WHATSAPP_VERIFY_TOKEN`. Clique **Verificar e salvar**: a Meta faz um GET e a função devolve o `hub.challenge` (se der erro, confira o token e se o deploy foi com `--no-verify-jwt`).
+3. Em **Campos do webhook**, clique em **Gerenciar** e **assine só `messages`**.
+4. Para sair do modo de desenvolvimento não é preciso nada: o app pode ficar em modo **Desenvolvimento** para uso pessoal.
+
+**6. Banco e vínculo**
+1. No SQL Editor do Supabase, rode `supabase/003_whatsapp.sql` e depois `supabase/verificar_seguranca.sql` (as tabelas `whatsapp_*` devem mostrar `policies = 0` e nenhum acesso de `anon`/`authenticated`).
+2. Cadastre o **seu** celular (formato E.164: `+`, país, DDD, número, sem espaços). Rode no SQL Editor, sem salvar o arquivo no repositório:
+```sql
+insert into public.whatsapp_vinculos (telefone_e164, user_id)
+select '+55DDDNUMERO', id from auth.users where email = 'SEU-EMAIL';
+```
+3. Mande `ajuda` para o número do bot. Se nada voltar: **Edge Functions → whatsapp → Logs** mostra eventos como `assinatura_invalida`, `numero_nao_vinculado` (com os 4 últimos dígitos, para conferir o número cadastrado) ou `erro_interno`.
+
+Para revogar: apague a linha em `whatsapp_vinculos`; para cortar de vez, gere um novo token no System User (o antigo deixa de valer) ou remova o webhook.
+
+**7. Custos** (conferido em 27/11/2026 em [developers.facebook.com/docs/whatsapp/pricing](https://developers.facebook.com/docs/whatsapp/pricing) e [updates-to-pricing](https://developers.facebook.com/docs/whatsapp/pricing/updates-to-pricing))
+- Mensagens que **você** manda para o bot não são cobradas.
+- As **respostas** do bot dentro da janela de 24 horas depois da sua mensagem são *mensagens de serviço*. Desde **1º/10/2026** elas são cobradas, com **cota gratuita de 1.000 mensagens entregues por mês, por número do bot** (zera todo mês, não acumula). Com o limite de 30/hora e uso pessoal, dá para ficar dentro da cota.
+- Sem forma de pagamento cadastrada na conta do WhatsApp, a Meta **bloqueia** as respostas depois das 1.000 do mês (não cobra).
+- Mensagens **iniciadas pelo bot** fora da janela de 24h (ex.: resumo diário) exigem *template* aprovado e são cobradas por mensagem (categoria utilidade). Por isso o resumo diário não faz parte desta etapa.
+- Os preços mudam: confira as páginas acima antes de cadastrar pagamento.
 
 ## Versão
 A versão aparece no rodapé do app. A cada mudança publicada, aumente o número em `js/versao.js` **e** em `versao.json` (o teste `tests/versao.test.mjs` confere que são iguais): MENOR para funcionalidade nova, CORREÇÃO para conserto.
